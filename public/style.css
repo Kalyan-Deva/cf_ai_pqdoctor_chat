@@ -135,6 +135,13 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .composer textarea:focus { outline: 2px solid var(--brand); outline-offset: -1px; border-color: transparent; }
 .send { width: 44px; border: 0; border-radius: var(--radius); background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; }
 .send:disabled { opacity: 0.5; cursor: default; }
+.mic { position: relative; width: 44px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--muted); display: grid; place-items: center; }
+.mic:hover { color: var(--brand); border-color: var(--brand); }
+.mic[hidden] { display: none; }
+.mic.recording { color: #fff; background: var(--bad); border-color: var(--bad); animation: pulse 1.2s ease-in-out infinite; }
+.mic.working { opacity: 0.6; cursor: progress; }
+.mic-time { position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 5px rgb(220 38 38 / 0.2); } }
 
 .memory { border-left: 1px solid var(--line); background: var(--panel); padding: 18px; overflow-y: auto; }
 .memory h2 { font-size: 15px; margin: 0; }

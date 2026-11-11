@@ -266,6 +266,83 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh();
 });
 
+// Voice: record in the browser, transcribe on Workers AI (Whisper), and put the words in the box.
+// Not sent automatically: a misheard domain would start a real check, so the user reads it first.
+const mic = $("#mic");
+const micTime = mic.querySelector(".mic-time");
+const MAX_SECONDS = 30;
+let recorder = null;
+let micTimer = null;
+
+function notice(text) {
+  log.append(render({ id: -1, role: "notice", text }));
+  scrollDown();
+}
+
+function pickMime() {
+  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]) {
+    if (MediaRecorder.isTypeSupported?.(t)) return t;
+  }
+  return "";
+}
+
+async function startRecording() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    return notice("Microphone access was blocked. Allow it for this site, or type your question.");
+  }
+  const mime = pickMime();
+  const chunks = [];
+  recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    clearInterval(micTimer);
+    micTime.textContent = "";
+    mic.classList.remove("recording");
+    mic.classList.add("working");
+    mic.disabled = true;
+    try {
+      const blob = new Blob(chunks, { type: (recorder.mimeType || mime || "audio/webm").split(";")[0] });
+      const res = await fetch("/api/transcribe", { method: "POST", headers: { "content-type": blob.type }, body: blob });
+      const body = await res.json().catch(() => ({}));
+      if (body.text) {
+        input.value = body.text;
+        autosize();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      } else notice(body.error ?? `Couldn't transcribe that (error ${res.status}).`);
+    } catch {
+      notice("Couldn't reach the server to transcribe. Try again, or type it.");
+    } finally {
+      recorder = null;
+      mic.classList.remove("working");
+      mic.disabled = false;
+      mic.setAttribute("aria-label", "Speak your question");
+    }
+  };
+  recorder.start();
+  const started = Date.now();
+  mic.classList.add("recording");
+  mic.setAttribute("aria-label", "Stop recording");
+  micTime.textContent = "0s";
+  micTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - started) / 1000);
+    micTime.textContent = `${s}s`;
+    if (s >= MAX_SECONDS) recorder?.stop();
+  }, 250);
+}
+
+if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
+  mic.hidden = false;
+  mic.addEventListener("click", () => {
+    if (recorder?.state === "recording") recorder.stop();
+    else if (!recorder) startRecording();
+  });
+}
+
 // Shareable prompts: /?q=check+google.com sends that message once the history has loaded, then
 // drops ?q from the address bar so a reload doesn't send it again.
 const linked = new URLSearchParams(location.search).get("q");

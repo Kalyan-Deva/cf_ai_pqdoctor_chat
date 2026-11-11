@@ -131,6 +131,30 @@ host this site as, chat.pqdoctor.com.
 Commit + push
 ```
 
+### 14. What's left
+
+```text
+what else left?
+```
+
+### 15. New demo
+
+```text
+Re-record the GIF
+```
+
+### 16. Voice input
+
+```text
+7. Voice input. The assignment allows "chat or voice"; chat already covers it, so this is extra only." Finish this as well
+```
+
+### 17. Ship it
+
+```text
+Deploy + push
+```
+
 ## Prompts the app sends to Llama
 
 Every answer a user reads is written by `@cf/meta/llama-3.3-70b-instruct-fp8-fast`.

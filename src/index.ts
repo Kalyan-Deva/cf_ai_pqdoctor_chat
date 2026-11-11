@@ -3,9 +3,11 @@
 //
 //   GET  /api/state?since=<id>   messages after <id>, the user's stack and watched domains
 //   POST /api/chat {message}     send a message; streams NDJSON events back
+//   POST /api/transcribe <audio>  speech to text (Whisper); returns {text} for the message box
 //   POST /api/forget             delete everything this app remembers about you
 
 import { MAX_MESSAGE, type UserMemory } from "./memory";
+import { checkAudio, transcribe } from "./voice";
 
 export { UserMemory } from "./memory";
 export { CheckWorkflow } from "./workflow";
@@ -70,6 +72,25 @@ export default {
       return new Response(await memory.chat(user.id, body.message, ip), {
         headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...extra },
       });
+    }
+
+    if (url.pathname === "/api/transcribe" && req.method === "POST") {
+      // Same origin only (an audio/* body can't be sent cross-site without a preflight we don't answer).
+      const origin = req.headers.get("origin");
+      if (origin !== null && origin !== url.origin) return json({ error: "Send audio from this site." }, 403);
+      const declared = Number(req.headers.get("content-length") ?? 0);
+      const early = checkAudio(req.headers.get("content-type"), declared || 1);
+      if (early) return json({ error: early.error }, early.status);
+      if (!(await env.IP_LIMIT.limit({ key: ip })).success) return json({ error: "Too many requests. Try again in a minute." }, 429, { "retry-after": "60" });
+      const audio = new Uint8Array(await req.arrayBuffer());
+      const bad = checkAudio(req.headers.get("content-type"), audio.byteLength);
+      if (bad) return json({ error: bad.error }, bad.status);
+      try {
+        const text = await transcribe(env.AI, audio);
+        return json(text ? { text } : { text: "", error: "I didn't catch anything. Try again a little closer to the mic." }, 200, extra);
+      } catch {
+        return json({ error: "Couldn't transcribe that. Try again, or type it." }, 502);
+      }
     }
 
     if (url.pathname === "/api/forget" && req.method === "POST") {
