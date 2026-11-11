@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pqdoctor Chat</title>
+  <meta name="description" content="Ask whether a domain is post-quantum. The pqdoctor engine decides; Llama 3.3 explains." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">
+      <img src="/favicon.svg" alt="" width="28" height="28" />
+      <span>pqdoctor <b>Chat</b></span>
+    </a>
+    <p class="tagline">The engine decides. Llama&nbsp;3.3 explains.</p>
+    <button id="memory-toggle" class="ghost only-narrow" aria-controls="memory" aria-expanded="false">Memory</button>
+  </header>
+
+  <div class="layout">
+    <main class="chat">
+      <div id="log" class="log" aria-live="polite">
+        <section id="empty" class="empty">
+          <h1>Is your server post-quantum?</h1>
+          <p>Name a domain and what it runs. pqdoctor probes it with real TLS handshakes, Llama&nbsp;3.3 puts the result in plain words, and I'll re-check it in a week.</p>
+          <div class="chips">
+            <button class="chip" data-say="is github.com post-quantum? we run nginx">is github.com post-quantum? we run nginx</button>
+            <button class="chip" data-say="check google.com">check google.com</button>
+            <button class="chip" data-say="what is X25519MLKEM768?">what is X25519MLKEM768?</button>
+          </div>
+        </section>
+      </div>
+      <form id="composer" class="composer" autocomplete="off">
+        <label for="input" class="sr-only">Message</label>
+        <textarea id="input" rows="1" maxlength="600" placeholder="is example.com post-quantum? we run nginx" required></textarea>
+        <button type="submit" id="send" class="send" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </main>
+
+    <aside id="memory" class="memory" aria-label="What this chat remembers">
+      <h2>Memory</h2>
+      <p class="muted small">Kept in your own Durable Object.</p>
+      <h3>Your stack</h3>
+      <div id="stack" class="stack muted">Not set. Mention it ("we run nginx").</div>
+      <h3>Domains</h3>
+      <ul id="domains" class="domains"><li class="muted">None yet.</li></ul>
+      <p id="limits" class="muted small"></p>
+      <button id="forget" class="ghost danger">Forget everything</button>
+    </aside>
+  </div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

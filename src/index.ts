@@ -1,0 +1,75 @@
+// Worker entry: the chat API in front of each user's Durable Object. Static files (the chat UI)
+// are served from public/ by the assets binding; only /api/* reaches this code.
+//
+//   GET  /api/state?since=<id>   messages after <id>, the user's stack and watched domains
+//   POST /api/chat {message}     send a message
+//   POST /api/forget             delete everything this app remembers about you
+
+import { MAX_MESSAGE, type UserMemory } from "./memory";
+
+export { UserMemory } from "./memory";
+export { CheckWorkflow } from "./workflow";
+
+const COOKIE = "pqchat_uid";
+
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
+
+/** The user is an anonymous random id in an HttpOnly cookie, made on first visit. */
+function userFrom(req: Request): { id: string; fresh: boolean } {
+  const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([a-f0-9]{32})(?:;|$)`).exec(req.headers.get("cookie") ?? "");
+  if (m) return { id: m[1], fresh: false };
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return { id: [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(""), fresh: true };
+}
+
+function cookieHeader(id: string, url: URL): string {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return `${COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure}`;
+}
+
+/** Writes must be same-origin JSON (blocks form posts and cross-site requests). */
+function sameOriginJson(req: Request, url: URL): boolean {
+  if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) return false;
+  const origin = req.headers.get("origin");
+  return origin === null || origin === url.origin;
+}
+
+export default {
+  async fetch(req, env): Promise<Response> {
+    const url = new URL(req.url);
+    const user = userFrom(req);
+    const extra: Record<string, string> = user.fresh ? { "set-cookie": cookieHeader(user.id, url) } : {};
+    const memory = (env.USER as DurableObjectNamespace<UserMemory>).getByName(user.id);
+
+    if (url.pathname === "/api/state" && req.method === "GET") {
+      const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+      return json(await memory.state(since), 200, extra);
+    }
+
+    if (url.pathname === "/api/chat" && req.method === "POST") {
+      if (!sameOriginJson(req, url)) return json({ error: "Send JSON from this site." }, 403);
+      const ip = req.headers.get("cf-connecting-ip") ?? "local";
+      const { success } = await env.IP_LIMIT.limit({ key: ip });
+      if (!success) return json({ error: "Too many messages from your network. Try again in a minute." }, 429, { "retry-after": "60", ...extra });
+      let body: { message?: unknown; since?: unknown };
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: "Body must be JSON." }, 400);
+      }
+      if (typeof body.message !== "string") return json({ error: "message must be a string." }, 400);
+      if (body.message.length > MAX_MESSAGE * 4) return json({ error: "Message too long." }, 413);
+      return json(await memory.chat(user.id, body.message), 200, extra);
+    }
+
+    if (url.pathname === "/api/forget" && req.method === "POST") {
+      if (!sameOriginJson(req, url)) return json({ error: "Send JSON from this site." }, 403);
+      await memory.forget();
+      return json({ ok: true }, 200, extra);
+    }
+
+    if (url.pathname.startsWith("/api/")) return json({ error: "Not found." }, 404);
+    return env.ASSETS.fetch(req);
+  },
+} satisfies ExportedHandler<Env>;

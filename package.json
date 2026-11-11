@@ -1,0 +1,19 @@
+{
+  "name": "cf-ai-pqdoctor-chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ask whether a domain is post-quantum in plain English. Workers AI explains, the pqdoctor engine decides.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 3105",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.160.0"
+  }
+}

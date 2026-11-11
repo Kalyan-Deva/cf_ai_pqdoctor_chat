@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cf-ai-pqdoctor-chat",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // The chat UI. /api/* runs the Worker first; everything else is a static file.
+  "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+
+  // Llama 3.3 on Workers AI: explains engine results, never decides them.
+  "ai": { "binding": "AI", "remote": true },
+
+  // One Durable Object per user: domains, stack, results, chat history (SQLite).
+  "durable_objects": { "bindings": [{ "name": "USER", "class_name": "UserMemory" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserMemory"] }],
+
+  // check -> explain -> save -> sleep 7 days -> re-check -> notify if the verdict changed.
+  "workflows": [{ "name": "pqdoctor-check", "binding": "CHECK", "class_name": "CheckWorkflow" }],
+
+  // Per-IP limit in front of the per-user limit (a new cookie doesn't buy new checks).
+  "ratelimits": [{ "name": "IP_LIMIT", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } }],
+
+  "vars": {
+    "ENGINE_URL": "https://pqdoctor.com/api/check",
+    "RECHECK_AFTER": "7 days",
+    "CHECKS_PER_HOUR": "10"
+  }
+}
