@@ -9,7 +9,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "types": "wrangler types",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "reindex": "node --no-warnings scripts/reindex.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

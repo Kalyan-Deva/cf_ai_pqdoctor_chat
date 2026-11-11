@@ -73,7 +73,7 @@ describe("explain()", () => {
   it("sends the model only the engine's facts", () => {
     const [system, user] = explainMessages(githubR, ["nginx"]);
     expect(system.content).toMatch(/only source of truth/);
-    const facts = JSON.parse(user.content.replace(/^pqdoctor result:\n/, ""));
+    const facts = JSON.parse(user.content.slice(user.content.indexOf("{"), user.content.lastIndexOf("}") + 1));
     expect(Object.keys(facts).sort()).toEqual(["cause", "certificate", "fixes", "headline", "host", "negotiatedGroup", "userStack", "verdict", "verdictInWords", "verifyCommand", "warnings"]);
     expect(facts.userStack).toEqual(["nginx"]);
   });

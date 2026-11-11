@@ -1,0 +1,1276 @@
+[
+  {
+    "id": "pqdoctor#_top~0",
+    "page": "pqdoctor",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/",
+    "text": "pqdoctor: Overview\n(A command-line tool that checks whether a server negotiates post-quantum TLS, works out why not, and prints the fix.)\npqdoctor answers one question about a TLS server: is it post-quantum, and if not, why? It sends seven hand-built ClientHellos, reads only the server’s first reply to each, and turns the replies into a verdict, a stable cause code, and the fix for that server’s software.\n\nnpm install -g pqdoctor\n\nPrebuilt for Windows, macOS (Apple silicon and Intel) and Linux (x86_64 and arm64), from npm.\n\nInstall pqdoctor 0.4.0\nQuickstart\npqdoctor nginx.org\n✘ nginx.org:443 (3.147.99.198)\n\nNot post-quantum: TLS 1.2 only\n\nThe server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM.\n\ncause: tls12-only server: nginx/1.31.3\n\nFixes\n\n1. Turn on TLS 1.3\n\nHybrid post-quantum key exchange only exists in TLS 1.3. This server answered with TLS 1.2.\n\n# nginx\n\nssl_protocols TLSv1.2 TLSv1.3;\n\n# Apache\n\nSSLProtocol -all +TLSv1.2 +TLSv1.3\n\n2. nginx: link against OpenSSL 3.5+ and list the PQ group\n\nnginx gets PQ from its TLS library. OpenSSL 3.5 or newer is needed (Ubuntu 25.04+, Debian 13+, or an nginx build linked against 3.5). Check with `nginx -V`.\n\nssl_protocols TLSv1.2 TLSv1.3;\n\nssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;"
+  },
+  {
+    "id": "pqdoctor#features~0",
+    "page": "pqdoctor",
+    "section": "Features",
+    "url": "https://pqdoctor.com/pqdoctor/#features",
+    "text": "pqdoctor: Features\n(A command-line tool that checks whether a server negotiates post-quantum TLS, works out why not, and prints the fix.)\n|\nDiagnosis, not just a yes/no | 12 cause codes: old TLS library, hand-set curve list, TLS 1.2 only, Kyber draft only, a middlebox dropping large or split hellos, and more\nFixes for your stack | Reads the Server header and prints the config for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, Postfix, Dovecot, Exim or Exchange, plus a Cloudflare Tunnel fallback\nHandshake-only | Never completes a key-exchange handshake, never sends application data\nPost-quantum authentication | Reads the certificate chain and checks whether the server serves an ML-DSA certificate\nEvery address | Up to 6 addresses per name, reported per address when they disagree\nMail and SSH | STARTTLS for SMTP, IMAP and POP3; SSH key exchange offers\nScans | Thousands of hosts, politely: concurrency and rate caps, resume, exclusions, CDN skipping\nScriptable | JSON and JSON Lines output, stable codes, meaningful exit status\nChecked | 59 / 59 against OpenSSL 3.5 on real sites, 30 / 30 in a fix lab of real faulty servers"
+  },
+  {
+    "id": "pqdoctor#guides~0",
+    "page": "pqdoctor",
+    "section": "Guides",
+    "url": "https://pqdoctor.com/pqdoctor/#guides",
+    "text": "pqdoctor: Guides\n(A command-line tool that checks whether a server negotiates post-quantum TLS, works out why not, and prints the fix.)\nScanning a listLarge scans, resume, exclusions, skipping CDNs, being a good neighbour.\nIn CIThe GitHub Action, and exit codes in any pipeline.\nScripting with JSONPowerShell and jq recipes for reports and scans.\nVerify by handConfirm any verdict with OpenSSL 3.5 or OpenSSH.\nMail serversSTARTTLS checks and fixes for Postfix, Dovecot, Exim, Exchange.\nSSHML-KEM and sntrup761 key exchange, and KexAlgorithms fixes."
+  },
+  {
+    "id": "pqdoctor#reference~0",
+    "page": "pqdoctor",
+    "section": "Reference",
+    "url": "https://pqdoctor.com/pqdoctor/#reference",
+    "text": "pqdoctor: Reference\n(A command-line tool that checks whether a server negotiates post-quantum TLS, works out why not, and prints the fix.)\nCLI reference: every command, option, stream and exit status.\n\nJSON output: the full schema.\n\nProbes and wire format: exactly what’s sent."
+  },
+  {
+    "id": "pqdoctor#where-else-it-runs~0",
+    "page": "pqdoctor",
+    "section": "Where else it runs",
+    "url": "https://pqdoctor.com/pqdoctor/#where-else-it-runs",
+    "text": "pqdoctor: Where else it runs\n(A command-line tool that checks whether a server negotiates post-quantum TLS, works out why not, and prints the fix.)\nThe same Rust engine is inside Flarebox, the GitHub Action, and the checker on Try it, which runs on Cloudflare’s network. All of them give the same verdict, cause and fix for the same server."
+  },
+  {
+    "id": "pqdoctor-how-it-works#_top~0",
+    "page": "How it works",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/",
+    "text": "How it works: Overview\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\npqdoctor asks one question of a TLS server: does it negotiate hybrid post-quantum key exchange (X25519MLKEM768, codepoint 0x11EC)? If it doesn’t, the useful part is why, because each reason has a different fix.\n\nTo find out, it sends seven ClientHellos it builds by hand and reads only the server’s first reply to each: a ServerHello, a HelloRetryRequest, or an alert. It never completes a handshake for these probes and never sends application data."
+  },
+  {
+    "id": "pqdoctor-how-it-works#the-seven-probes~0",
+    "page": "How it works",
+    "section": "The seven probes",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/#the-seven-probes",
+    "text": "How it works: The seven probes\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\n# | Probe | What it shows\n1 | TLS 1.3 with classical groups | The baseline: does TLS 1.3 work at all, and which group does the server pick?\n2 | Offer only an X25519MLKEM768 key share | Does it accept post-quantum when that’s all there is, or ask for something else?\n3 | X25519 share, ML-KEM listed first | Does it prefer PQ, asking a client that sent only an X25519 share to retry with ML-KEM?\n4 | Old draft group X25519Kyber768Draft00 | Does it only know the pre-standard Kyber draft?\n5 | PQ ClientHello split across two TCP segments | A real PQ hello is large and often split. Does something in the path drop it?\n6 | Classical ClientHello, same size, split | The control for 5: is it the size and split, or the PQ group itself?\n7 | P-256 / P-384 only | Does the server only answer NIST curves, a sign of a hand-written curve list?\nThe probes run one at a time, 120 ms apart, with 5 s connect and read timeouts. A probe that gets no reply is retried once. Parallel probes trip servers’ rate limiters: an early version fired all seven at once, www.debian.org rate-limited the burst, and pqdoctor reported “No TLS handshake at all”. It was confidently wrong, so the probes became sequential and “nothing answered” became its own verdict."
+  },
+  {
+    "id": "pqdoctor-how-it-works#from-replies-to-a-cause~0",
+    "page": "How it works",
+    "section": "From replies to a cause",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/#from-replies-to-a-cause",
+    "text": "How it works: From replies to a cause\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\nThe replies are read in a fixed order. The first rule that matches gives the verdict and the cause code:\n\nCouldn’t connect: connect-failed.\n\nNeither a classical nor a P-curve hello got any TLS answer, only timeouts or resets: no-reply. pqdoctor doesn’t guess here, since the server may be down, firewalled or rate-limiting.\n\nProbe 2 got a post-quantum group: post-quantum. It’s pq-preferred if probe 3 got a retry request for ML-KEM, pq otherwise, and pq-split-dropped if probe 5 went unanswered.\n\nNo hello completed with any group: no-tls.\n\nThe server answered TLS 1.2: tls12-only.\n\nClassical TLS 1.3 works but the PQ hello dies: large-hello-dropped if the same-size classical hello (probe 6) also dies, pq-group-rejected if only the PQ group does.\n\nProbe 4 got the Kyber draft group: kyber-draft-only.\n\nOtherwise, TLS 1.3 without ML-KEM: pinned-nist if the server steers X25519 clients to P-256 or only answers P-curve hellos, no-mlkem if not."
+  },
+  {
+    "id": "pqdoctor-how-it-works#tailoring-the-fix~0",
+    "page": "How it works",
+    "section": "Tailoring the fix",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/#tailoring-the-fix",
+    "text": "How it works: Tailoring the fix\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\nA fix depends on the server software. pqdoctor makes one plain-HTTP HEAD / on port 80 and reads the Server header (3 s, best effort). From it, it picks a stack: nginx, Apache, HAProxy, Caddy, IIS, Node, Java, envoy and others, and Postfix, Dovecot, Exim or Exchange from a mail server’s greeting. The fixes are then written for that stack, and there’s always a Cloudflare Tunnel fallback. --no-http skips the request."
+  },
+  {
+    "id": "pqdoctor-how-it-works#the-certificate-check~0",
+    "page": "How it works",
+    "section": "The certificate check",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/#the-certificate-check",
+    "text": "How it works: The certificate check\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\nAfter the key-exchange probes, pqdoctor checks post-quantum authentication: does the server serve an ML-DSA certificate? This needs to read the Certificate message, which TLS 1.3 encrypts, so it’s the one place pqdoctor does real cryptography. It completes one X25519 exchange and runs the TLS 1.3 key schedule (AES-128-GCM) just far enough to decrypt the Certificate and CertificateVerify, then hangs up. It never sends Finished. That’s two more connections. It’s on by default for a single host and off for scans (--auth turns it on)."
+  },
+  {
+    "id": "pqdoctor-how-it-works#every-address~0",
+    "page": "How it works",
+    "section": "Every address",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/#every-address",
+    "text": "How it works: Every address\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\nA name with several addresses can have servers that disagree. For one host, pqdoctor checks every address the name resolves to, up to six, and reports per address when they differ. The fix lab has a localhost case answering classical on 127.0.0.1 and post-quantum on ::1. --first-address checks only the first."
+  },
+  {
+    "id": "pqdoctor-how-it-works#being-polite~0",
+    "page": "How it works",
+    "section": "Being polite",
+    "url": "https://pqdoctor.com/pqdoctor/how-it-works/#being-polite",
+    "text": "How it works: Being polite\n(Seven hand-made ClientHellos, read only up to the server's first reply, turned into a verdict, a cause and a fix.)\nHandshake-only: no application data is ever sent.\n\nThe Server header request’s User-Agent names the tool and can carry a contact (--contact) for opt-outs.\n\nscan runs at most 4 hosts at once and starts at most 2 new hosts a second by default (caps: 32 and 20). Each host’s probes stay one at a time.\n\n--exclude FILE skips hosts and their subdomains."
+  },
+  {
+    "id": "pqdoctor-reading-a-report#_top~0",
+    "page": "Reading a report",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/",
+    "text": "Reading a report: Overview\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nAll output on this page is real, from 2026-10-15. Servers change, so running it today may give different answers."
+  },
+  {
+    "id": "pqdoctor-reading-a-report#the-verdict~0",
+    "page": "Reading a report",
+    "section": "The verdict",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#the-verdict",
+    "text": "Reading a report: The verdict\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nThe first lines say what was checked, the verdict, why, and the cause code:\n\npqdoctor github.com\n✘ github.com:443 (140.82.114.4)\n\nNot post-quantum\n\nTLS 1.3 works, but when offered X25519MLKEM768 the server asks for X25519 instead. Its TLS library doesn't have ML-KEM, or the groups are limited in config.\n\ncause: no-mlkem\n\n✔ means post-quantum and ✘ means it isn’t. The address in brackets is the one that was probed.\n\nThe cause code is stable, so it’s what scans, the GitHub Action and Flarebox’s history compare. The sentence above it can change between versions.\n\nWhen the Server header names the software, it’s shown next to the cause, e.g. server: nginx/1.31.3. That’s what tailors the fixes.\n\nA post-quantum server looks like this. It has more than one address, so each is listed:\n\npqdoctor cloudflare.com\n✔ cloudflare.com:443 (104.16.133.229)\n\nPost-quantum: negotiates X25519MLKEM768\n\nSupports and prefers hybrid ML-KEM key exchange.\n\ncause: pq-preferred server: cloudflare\n\nAddresses\n\n· 104.16.133.229 pq-preferred · X25519MLKEM768\n\n· 104.16.132.229 pq-preferred · X25519MLKEM768"
+  },
+  {
+    "id": "pqdoctor-reading-a-report#mixed~0",
+    "page": "Reading a report",
+    "section": "Mixed",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#mixed",
+    "text": "Reading a report: Mixed\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nFrom 0.4.0, a non-PQ answer is checked again: the same address, key exchange only, 1 s later (--reprobe N for up to N re-checks, at most 5; --reprobe 0 turns it off). If any re-check negotiates ML-KEM, the verdict is mixed, marked ◐: “Mixed: post-quantum on some connections, not on others”. A warning says how many of the checks were post-quantum, and with which group.\n\nIt means the servers behind that one address don’t all agree. That’s typical of a provider rolling ML-KEM out to some of its servers at a time: on 2026-10-26, 14 of the study’s 15 “regressions” were Google Cloud pools mid-rollout, answering post-quantum on 3 to 7 of 11 probes to the same address. It isn’t a regression, and it’s post-quantum once every server is.\n\nThe exit status is 1, since it isn’t fully post-quantum.\n\npqdoctor diff lists a host that went from post-quantum to mixed under mixed, not regressed, and exits 0 for it. Mixed back to post-quantum is fixed.\n\nThe agent, the fleet and the GitHub Action’s fail-on: regression don’t count it as a regression either.\n\nEvery re-check is in the JSON report’s reprobes."
+  },
+  {
+    "id": "pqdoctor-reading-a-report#fixes~0",
+    "page": "Reading a report",
+    "section": "Fixes",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#fixes",
+    "text": "Reading a report: Fixes\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nFixes are numbered in the order to try them. The first is for the stack pqdoctor found, the last is always the Cloudflare Tunnel fallback, and each has the config lines to paste:\n\npqdoctor nginx.org\n✘ nginx.org:443 (3.147.99.198)\n\nNot post-quantum: TLS 1.2 only\n\nThe server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM.\n\ncause: tls12-only server: nginx/1.31.3\n\nFixes\n\n1. Turn on TLS 1.3\n\nHybrid post-quantum key exchange only exists in TLS 1.3. This server answered with TLS 1.2.\n\n# nginx\n\nssl_protocols TLSv1.2 TLSv1.3;\n\n# Apache\n\nSSLProtocol -all +TLSv1.2 +TLSv1.3\n\n2. nginx: link against OpenSSL 3.5+ and list the PQ group\n\nnginx gets PQ from its TLS library. OpenSSL 3.5 or newer is needed (Ubuntu 25.04+, Debian 13+, or an nginx build linked against 3.5). Check with `nginx -V`.\n\nssl_protocols TLSv1.2 TLSv1.3;\n\nssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;\n\n3. Can't upgrade? Cloudflare Tunnel\n\nRun cloudflared next to the server. The tunnel from the server to Cloudflare already uses post-quantum key agreement, so the hop that leaves your network is protected even if the server isn't.\n\ncloudflared tunnel run <tunnel-name>"
+  },
+  {
+    "id": "pqdoctor-reading-a-report#authentication~0",
+    "page": "Reading a report",
+    "section": "Authentication",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#authentication",
+    "text": "Reading a report: Authentication\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nThe ML-DSA check lists the certificate chain the server sends today’s clients: each certificate’s key, what signed it, and its size. Then it says whether the server serves an ML-DSA certificate:\n\npqdoctor github.com (continued)\nAuthentication No ML-DSA certificate\n\nLeaf: ec-p256 key, signed ecdsa-sha256. Listing ML-DSA schemes doesn't break it, and offered only ML-DSA it refuses cleanly — what any correct TLS stack does, so this doesn't show whether its stack could serve ML-DSA. The chain is 2737 bytes.\n\nml-dsa: no-cert\n\nleaf github.com ec-p256 signed ecdsa-sha256 1009 B\n\n↑ Sectigo Public Server Authenticat… ec-p256 signed ecdsa-sha384 867 B\n\n↑ Sectigo Public Server Authenticat… ec-p384 signed ecdsa-sha384 842 B"
+  },
+  {
+    "id": "pqdoctor-reading-a-report#probes~0",
+    "page": "Reading a report",
+    "section": "Probes",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#probes",
+    "text": "Reading a report: Probes\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nEach of the seven probes, with the server’s first reply and how long it took:\n\npqdoctor github.com (continued)\nProbes\n\n· TLS 1.3 with classical groups TLS 1.3: picked X25519 (57 ms)\n\n· Offer only an X25519MLKEM768 key share TLS 1.3: asked to retry with X25519 (58 ms)\n\n· X25519 share, ML-KEM listed first TLS 1.3: picked X25519 (53 ms)\n\n· Old draft group X25519Kyber768Draft00 TLS 1.3: asked to retry with X25519 (52 ms)\n\n· PQ ClientHello split across two TCP segments TLS 1.3: asked to retry with X25519 (89 ms)\n\n· Classical ClientHello, same size, split TLS 1.3: picked X25519 (103 ms)\n\n· P-256 / P-384 only TLS 1.3: picked P-256 (56 ms)\n\nRead across, these tell the story: TLS 1.3 works (1), offered only ML-KEM the server asks for X25519 instead (2), and it doesn’t know the Kyber draft either (4). Split hellos are fine (5, 6), so no middlebox is at fault, and it answers P-curves (7) without preferring them. So it’s no-mlkem, not pinned-nist."
+  },
+  {
+    "id": "pqdoctor-reading-a-report#verify-it-yourself~0",
+    "page": "Reading a report",
+    "section": "Verify it yourself",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#verify-it-yourself",
+    "text": "Reading a report: Verify it yourself\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nEvery report ends with an OpenSSL command that offers only X25519MLKEM768. With OpenSSL 3.5+, a post-quantum server’s handshake completes with that group, and any other server’s fails:\n\nopenssl s_client -connect github.com:443 -servername github.com -groups X25519MLKEM768 </dev/null 2>&1 | grep -i 'group'"
+  },
+  {
+    "id": "pqdoctor-reading-a-report#json~0",
+    "page": "Reading a report",
+    "section": "JSON",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#json",
+    "text": "Reading a report: JSON\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\n--json prints the whole report as one object. These are the fields that matter for automation:\n\nField\nverdict | pq, pqWithWarning, notPq, noTls13, broken, unreachable or, from 0.4.0, mixed\ncauseCode | The cause code\ngroup | The PQ group negotiated, if any\nprefersPq | Picks ML-KEM even when the client’s first key share is classical\nwarnings | E.g. split PQ hellos dropped, or PQ only when offered first\nfixes | title, detail and snippet for each fix\nfingerprint | serverHeader, stack, TLS version, cipher\nprobes | Each probe and its reply\nauth | The certificate check, when it ran\naddresses | Per-address results, when the name has more than one\nreprobes | 0.4.0: the re-checks after a non-PQ answer, when there were any\nverify | The OpenSSL command"
+  },
+  {
+    "id": "pqdoctor-reading-a-report#exit-status~0",
+    "page": "Reading a report",
+    "section": "Exit status",
+    "url": "https://pqdoctor.com/pqdoctor/reading-a-report/#exit-status",
+    "text": "Reading a report: Exit status\n(What each part of a pqdoctor report means, using real output for github.com, cloudflare.com and nginx.org.)\nFor one host: 0 post-quantum, 1 not post-quantum (including mixed), 2 unreachable or an error."
+  },
+  {
+    "id": "pqdoctor-causes#_top~0",
+    "page": "Causes and fixes",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/",
+    "text": "Causes and fixes: Overview\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nEvery report has one cause code. It’s stable across versions, so scans, the GitHub Action and Flarebox’s history compare by it."
+  },
+  {
+    "id": "pqdoctor-causes#post-quantum~0",
+    "page": "Causes and fixes",
+    "section": "Post-quantum",
+    "url": "https://pqdoctor.com/pqdoctor/causes/#post-quantum",
+    "text": "Causes and fixes: Post-quantum\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nCode | Meaning | In the study\npq-preferred | Negotiates X25519MLKEM768, and picks it even when the client’s first key share is classical | 1,038\npq | Negotiates it when the client offers it first | 139\npq-split-dropped | Post-quantum, but a PQ hello split across TCP segments goes unanswered | 0\npq-other-group | 0.2.0: post-quantum only with SecP256r1MLKEM768, SecP384r1MLKEM1024 or pure ML-KEM, not X25519MLKEM768. From the group survey | not measured (0.2.0)"
+  },
+  {
+    "id": "pqdoctor-causes#not-post-quantum~0",
+    "page": "Causes and fixes",
+    "section": "Not post-quantum",
+    "url": "https://pqdoctor.com/pqdoctor/causes/#not-post-quantum",
+    "text": "Causes and fixes: Not post-quantum\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nCounts are out of the 3,439 origins in the study that answered TLS but weren’t post-quantum.\n\nCode | Meaning | In the study | Fix shown in the fix lab?\nno-mlkem | TLS 1.3, but no ML-KEM: the TLS library predates it, or the group list leaves it out | 2,108 (61.3%) | Yes\ntls12-only | No TLS 1.3 at all, so no hybrid key exchange | 1,146 (33.3%) | Yes\npinned-nist | As no-mlkem, and it prefers NIST P-curves, a hand-written curve list | 109 (3.2%) | Yes\nno-tls | TLS alerts to every hello | 41 (1.2%) | —\nlarge-hello-dropped | A middlebox drops any ClientHello of PQ size split across segments | 32 (0.9%) | Yes\npq-group-rejected | Something in the path breaks on the X25519MLKEM768 codepoint itself | 2 (0.1%) | Yes\nkyber-draft-only | Only the pre-standard X25519Kyber768Draft00 | 1 | Unit tests only"
+  },
+  {
+    "id": "pqdoctor-causes#no-answer~0",
+    "page": "Causes and fixes",
+    "section": "No answer",
+    "url": "https://pqdoctor.com/pqdoctor/causes/#no-answer",
+    "text": "Causes and fixes: No answer\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nCode | Meaning\nno-reply | Only timeouts or resets: down, firewalled or rate-limiting\nconnect-failed | Couldn’t open a connection\nIn the study, 523 of 5,139 probed origins gave no TLS answer on port 443 and aren’t counted in any share."
+  },
+  {
+    "id": "pqdoctor-causes#ssh~0",
+    "page": "Causes and fixes",
+    "section": "SSH",
+    "url": "https://pqdoctor.com/pqdoctor/causes/#ssh",
+    "text": "Causes and fixes: SSH\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nThe SSH check has its own codes: ssh-mlkem, ssh-sntrup-only, ssh-draft-only, ssh-kex-config, ssh-old-openssh, ssh-no-pq and connect-failed."
+  },
+  {
+    "id": "pqdoctor-causes#quic~0",
+    "page": "Causes and fixes",
+    "section": "QUIC",
+    "url": "https://pqdoctor.com/pqdoctor/causes/#quic",
+    "text": "Causes and fixes: QUIC\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nThe QUIC check (0.2.0): quic-pq-preferred, quic-pq, quic-no-mlkem, quic-hello-rejected, quic-no-reply, quic-version."
+  },
+  {
+    "id": "pqdoctor-causes#fixes-by-server~0",
+    "page": "Causes and fixes",
+    "section": "Fixes by server",
+    "url": "https://pqdoctor.com/pqdoctor/causes/#fixes-by-server",
+    "text": "Causes and fixes: Fixes by server\n(Every cause code pqdoctor reports, what it means, how often the study found it, and where the fix is.)\nThe config lines for each server, and the Tunnel fallback, are on Fixes by server."
+  },
+  {
+    "id": "pqdoctor-causes-no-mlkem#_top~0",
+    "page": "no-mlkem",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-mlkem/",
+    "text": "no-mlkem: Overview\n(TLS 1.3 works, but the server has no ML-KEM. The most common cause by far.)\nTLS 1.3 works, but the server doesn’t negotiate ML-KEM. Either its TLS library is too old to have it, or the group list in its config leaves it out.\n\nThis was 61.3% of the non-post-quantum origins in the study: 2,108 of 3,439."
+  },
+  {
+    "id": "pqdoctor-causes-no-mlkem#how-pqdoctor-sees-it~0",
+    "page": "no-mlkem",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-mlkem/#how-pqdoctor-sees-it",
+    "text": "no-mlkem: How pqdoctor sees it\n(TLS 1.3 works, but the server has no ML-KEM. The most common cause by far.)\nThe classical TLS 1.3 hello (probe 1) gets a ServerHello.\n\nOffered only an X25519MLKEM768 key share (probe 2), the server asks the client to retry with a classical group, usually X25519.\n\nIt doesn’t steer clients to NIST curves. That would be pinned-nist."
+  },
+  {
+    "id": "pqdoctor-causes-no-mlkem#the-fix~0",
+    "page": "no-mlkem",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-mlkem/#the-fix",
+    "text": "no-mlkem: The fix\n(TLS 1.3 works, but the server has no ML-KEM. The most common cause by far.)\nUpgrade the TLS library. Hybrid PQ (X25519MLKEM768) ships in OpenSSL 3.5+, current BoringSSL and AWS-LC, Go 1.24+, and rustls with aws-lc-rs.\n\nIf the groups are set by hand, put X25519MLKEM768 first:\n\n# nginx, on OpenSSL 3.5+\n\nssl_protocols TLSv1.2 TLSv1.3;\n\nssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;\n\n// Go 1.24+: the default includes X25519MLKEM768\n\ncfg.CurvePreferences = nil\n\npqdoctor prints the version for the stack it detects. Every server’s lines are on Fixes by server. If you can’t upgrade, there’s the Cloudflare Tunnel fallback."
+  },
+  {
+    "id": "pqdoctor-causes-no-mlkem#shown-in-the-fix-lab~0",
+    "page": "no-mlkem",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-mlkem/#shown-in-the-fix-lab",
+    "text": "no-mlkem: Shown in the fix lab\n(TLS 1.3 works, but the server has no ML-KEM. The most common cause by far.)\nThe fix lab ran real servers with this fault. pqdoctor reported each one not post-quantum, and the fix it printed made each one post-quantum:\n\nServer | Fix applied | After\nOpenSSL 3.5, groups X25519:P-256 | ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1 | PQ\nNode, ecdhCurve set to X25519 | ecdhCurve: 'X25519MLKEM768:X25519:P-256' | PQ\nGo without ML-KEM (GODEBUG=tlsmlkem=0, pre-1.24 behaviour) | Go 1.24+ defaults (CurvePreferences = nil) | PQ\nGo with CurvePreferences X25519, P-256 | Remove CurvePreferences | PQ\nSMTP, IMAP STARTTLS with pinned groups | The Postfix / Dovecot group list | PQ"
+  },
+  {
+    "id": "pqdoctor-causes-no-mlkem#in-the-study~0",
+    "page": "no-mlkem",
+    "section": "In the study",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-mlkem/#in-the-study",
+    "text": "no-mlkem: In the study\n(TLS 1.3 works, but the server has no ML-KEM. The most common cause by far.)\nServer software named in the Server header for no-mlkem origins: unknown 1,030, nginx 600, apache 225, aws 151, envoy 30. The header is often missing, so “unknown” is large."
+  },
+  {
+    "id": "pqdoctor-causes-no-mlkem#verify~0",
+    "page": "no-mlkem",
+    "section": "Verify",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-mlkem/#verify",
+    "text": "no-mlkem: Verify\n(TLS 1.3 works, but the server has no ML-KEM. The most common cause by far.)\nopenssl s_client -connect example.com:443 -servername example.com -groups X25519MLKEM768 </dev/null 2>&1 | grep -i 'group'"
+  },
+  {
+    "id": "pqdoctor-causes-tls12-only#_top~0",
+    "page": "tls12-only",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/tls12-only/",
+    "text": "tls12-only: Overview\n(The server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM at all.)\nThe server answers with TLS 1.2. Hybrid post-quantum key exchange only exists in TLS 1.3, so nothing else matters until TLS 1.3 is on.\n\nThis was 33.3% of the non-post-quantum origins in the study: 1,146 of 3,439."
+  },
+  {
+    "id": "pqdoctor-causes-tls12-only#how-pqdoctor-sees-it~0",
+    "page": "tls12-only",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/tls12-only/#how-pqdoctor-sees-it",
+    "text": "tls12-only: How pqdoctor sees it\n(The server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM at all.)\nEvery probe, even the classical TLS 1.3 one, gets a TLS 1.2 ServerHello. Real output for nginx.org on 2026-10-15:\n\npqdoctor nginx.org (probes)\nProbes\n\n· TLS 1.3 with classical groups TLS 1.2 ServerHello (78 ms)\n\n· Offer only an X25519MLKEM768 key share TLS 1.2 ServerHello (76 ms)\n\n· X25519 share, ML-KEM listed first TLS 1.2 ServerHello (77 ms)\n\n· Old draft group X25519Kyber768Draft00 TLS 1.2 ServerHello (80 ms)\n\n· PQ ClientHello split across two TCP segments TLS 1.2 ServerHello (117 ms)\n\n· Classical ClientHello, same size, split TLS 1.2 ServerHello (121 ms)\n\n· P-256 / P-384 only TLS 1.2 ServerHello (82 ms)"
+  },
+  {
+    "id": "pqdoctor-causes-tls12-only#the-fix~0",
+    "page": "tls12-only",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/tls12-only/#the-fix",
+    "text": "tls12-only: The fix\n(The server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM at all.)\nTurn on TLS 1.3, then add the PQ group:\n\n# nginx\n\nssl_protocols TLSv1.2 TLSv1.3;\n\nssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;\n\n# Apache\n\nSSLProtocol -all +TLSv1.2 +TLSv1.3\n\nSSLOpenSSLConfCmd Groups X25519MLKEM768:X25519:prime256v1\n\nThe TLS library underneath has to be OpenSSL 3.5 or newer for the group to exist. Every server is on Fixes by server."
+  },
+  {
+    "id": "pqdoctor-causes-tls12-only#shown-in-the-fix-lab~0",
+    "page": "tls12-only",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/tls12-only/#shown-in-the-fix-lab",
+    "text": "tls12-only: Shown in the fix lab\n(The server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM at all.)\nAn OpenSSL 3.5 server capped at TLS 1.2 was reported tls12-only. After enabling TLS 1.3 (ssl_protocols TLSv1.2 TLSv1.3) and the groups line, it was post-quantum.\n\nSeparately, OpenSSL requiring TLS 1.3 got a protocol_version alert from all three tls12-only sites in the 60-site comparison: nginx.org, www.mit.edu and www.baidu.com."
+  },
+  {
+    "id": "pqdoctor-causes-tls12-only#many-are-redirectors~0",
+    "page": "tls12-only",
+    "section": "Many are redirectors",
+    "url": "https://pqdoctor.com/pqdoctor/causes/tls12-only/#many-are-redirectors",
+    "text": "tls12-only: Many are redirectors\n(The server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM at all.)\nMany tls12-only hosts are bare domains (the Tranco entry), not the site people visit. Among the first 300 origins, the study probed the www. names of 51 TLS 1.2 apexes. For 22 of them, www. was on a CDN (Akamai 13, CloudFront 6, Cloudflare 3): the apex is a leftover redirect server in front of a CDN-hosted site.\n\nThat host still terminates TLS for everyone who types the bare domain, so it’s a real gap, and a cheap one to fix. It also means the headline percentage partly measures redirectors."
+  },
+  {
+    "id": "pqdoctor-causes-tls12-only#in-the-study~0",
+    "page": "tls12-only",
+    "section": "In the study",
+    "url": "https://pqdoctor.com/pqdoctor/causes/tls12-only/#in-the-study",
+    "text": "tls12-only: In the study\n(The server doesn't speak TLS 1.3, so it can't do hybrid ML-KEM at all.)\nServer header for tls12-only origins: unknown 491, nginx 315, aws 177, apache 134, iis 23."
+  },
+  {
+    "id": "pqdoctor-causes-large-hello-dropped#_top~0",
+    "page": "large-hello-dropped",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/large-hello-dropped/",
+    "text": "large-hello-dropped: Overview\n(Classical hellos work, but anything the size of a post-quantum ClientHello, split across packets, dies in the path.)\nA classical hello works, but any ClientHello padded to post-quantum size and split across packets fails. Something in the path can’t reassemble a ClientHello that spans TCP segments: a load balancer, WAF or firewall that inspects TLS.\n\nThe verdict is broken, not just “not post-quantum”. Real browsers send hellos this size today, so these clients may already be failing.\n\nThis was 32 of the 3,439 non-post-quantum origins in the study (0.9%)."
+  },
+  {
+    "id": "pqdoctor-causes-large-hello-dropped#how-pqdoctor-sees-it~0",
+    "page": "large-hello-dropped",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/large-hello-dropped/#how-pqdoctor-sees-it",
+    "text": "large-hello-dropped: How pqdoctor sees it\n(Classical hellos work, but anything the size of a post-quantum ClientHello, split across packets, dies in the path.)\nThe classical TLS 1.3 hello (probe 1) works.\n\nThe PQ hello (probe 2) fails.\n\nThe control, a classical hello of the same size split the same way (probe 6), fails too. So it’s the size and the split, not the PQ group. If probe 6 worked, the cause would be pq-group-rejected."
+  },
+  {
+    "id": "pqdoctor-causes-large-hello-dropped#the-fix~0",
+    "page": "large-hello-dropped",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/large-hello-dropped/#the-fix",
+    "text": "large-hello-dropped: The fix\n(Classical hellos work, but anything the size of a post-quantum ClientHello, split across packets, dies in the path.)\nUpdate or replace the middlebox. Check every load balancer, WAF and firewall that inspects TLS in front of the server. Update its firmware, or turn off TLS inspection for this traffic.\n\npqdoctor also prints the stack’s upgrade fix, since the server behind the box may need it too."
+  },
+  {
+    "id": "pqdoctor-causes-large-hello-dropped#shown-in-the-fix-lab~0",
+    "page": "large-hello-dropped",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/large-hello-dropped/#shown-in-the-fix-lab",
+    "text": "large-hello-dropped: Shown in the fix lab\n(Classical hellos work, but anything the size of a post-quantum ClientHello, split across packets, dies in the path.)\nA post-quantum OpenSSL 3.5 server behind a box that drops ClientHellos over 1,200 bytes was reported “Breaks on PQ”. With the box removed, it was post-quantum."
+  },
+  {
+    "id": "pqdoctor-causes-large-hello-dropped#in-the-study~0",
+    "page": "large-hello-dropped",
+    "section": "In the study",
+    "url": "https://pqdoctor.com/pqdoctor/causes/large-hello-dropped/#in-the-study",
+    "text": "large-hello-dropped: In the study\n(Classical hellos work, but anything the size of a post-quantum ClientHello, split across packets, dies in the path.)\nServer header: nginx 21, unknown 9, apache 2."
+  },
+  {
+    "id": "pqdoctor-causes-pq-split-dropped#_top~0",
+    "page": "pq-split-dropped",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-split-dropped/",
+    "text": "pq-split-dropped: Overview\n(Post-quantum, but a PQ ClientHello split across two TCP segments gets no answer.)\nThe server is post-quantum, but a PQ ClientHello split across two TCP segments gets no answer. Real clients’ PQ hellos are often split, so something in the path, usually a load balancer or firewall, will fail some of them.\n\nThe verdict is pqWithWarning: post-quantum, with this warning in the report."
+  },
+  {
+    "id": "pqdoctor-causes-pq-split-dropped#how-pqdoctor-sees-it~0",
+    "page": "pq-split-dropped",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-split-dropped/#how-pqdoctor-sees-it",
+    "text": "pq-split-dropped: How pqdoctor sees it\n(Post-quantum, but a PQ ClientHello split across two TCP segments gets no answer.)\nThe PQ hello in one piece (probe 2) negotiates X25519MLKEM768.\n\nThe same hello split across two segments (probe 5) gets no reply."
+  },
+  {
+    "id": "pqdoctor-causes-pq-split-dropped#the-fix~0",
+    "page": "pq-split-dropped",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-split-dropped/#the-fix",
+    "text": "pq-split-dropped: The fix\n(Post-quantum, but a PQ ClientHello split across two TCP segments gets no answer.)\nFind the device in front of the server that can’t reassemble a split ClientHello, and update it or turn off its TLS inspection for this traffic."
+  },
+  {
+    "id": "pqdoctor-causes-pq-split-dropped#shown-in-the-fix-lab~0",
+    "page": "pq-split-dropped",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-split-dropped/#shown-in-the-fix-lab",
+    "text": "pq-split-dropped: Shown in the fix lab\n(Post-quantum, but a PQ ClientHello split across two TCP segments gets no answer.)\nA post-quantum OpenSSL 3.5 server behind a box that drops ClientHellos split across TCP segments was reported “PQ + warning”. With the box removed, it was post-quantum with no warning."
+  },
+  {
+    "id": "pqdoctor-causes-pq-split-dropped#from-workers~0",
+    "page": "pq-split-dropped",
+    "section": "From Workers",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-split-dropped/#from-workers",
+    "text": "pq-split-dropped: From Workers\n(Post-quantum, but a PQ ClientHello split across two TCP segments gets no answer.)\nThe checker on Cloudflare’s network writes the two halves 40 ms apart, but whether they leave Cloudflare’s network as separate TCP segments can’t be observed locally. So this warning may not reproduce from Workers."
+  },
+  {
+    "id": "pqdoctor-causes-pq-group-rejected#_top~0",
+    "page": "pq-group-rejected",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-group-rejected/",
+    "text": "pq-group-rejected: Overview\n(Same-size classical hellos are fine, but offering the X25519MLKEM768 codepoint breaks the handshake.)\nSame-size classical hellos are fine, but offering X25519MLKEM768 breaks the handshake. Something doesn’t tolerate a key-share group it doesn’t know. A correct stack ignores an unknown group and picks one it knows.\n\nThe verdict is broken. In the study, 2 of 3,439 non-post-quantum origins."
+  },
+  {
+    "id": "pqdoctor-causes-pq-group-rejected#how-pqdoctor-sees-it~0",
+    "page": "pq-group-rejected",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-group-rejected/#how-pqdoctor-sees-it",
+    "text": "pq-group-rejected: How pqdoctor sees it\n(Same-size classical hellos are fine, but offering the X25519MLKEM768 codepoint breaks the handshake.)\nThe classical TLS 1.3 hello (probe 1) works.\n\nThe PQ hello (probe 2) fails.\n\nThe same-size classical hello split the same way (probe 6) works, so size isn’t the problem. The codepoint is."
+  },
+  {
+    "id": "pqdoctor-causes-pq-group-rejected#the-fix~0",
+    "page": "pq-group-rejected",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-group-rejected/#the-fix",
+    "text": "pq-group-rejected: The fix\n(Same-size classical hellos are fine, but offering the X25519MLKEM768 codepoint breaks the handshake.)\nFind what chokes on the X25519MLKEM768 codepoint (0x11EC). It’s usually an old TLS-inspecting appliance, or a TLS library with a key-share parsing bug. Update it."
+  },
+  {
+    "id": "pqdoctor-causes-pq-group-rejected#shown-in-the-fix-lab~0",
+    "page": "pq-group-rejected",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-group-rejected/#shown-in-the-fix-lab",
+    "text": "pq-group-rejected: Shown in the fix lab\n(Same-size classical hellos are fine, but offering the X25519MLKEM768 codepoint breaks the handshake.)\nA post-quantum OpenSSL 3.5 server behind a box that resets on the X25519MLKEM768 codepoint was reported “Breaks on PQ”. With the box removed, it was post-quantum."
+  },
+  {
+    "id": "pqdoctor-causes-pq-other-group#_top~0",
+    "page": "pq-other-group",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-other-group/",
+    "text": "pq-other-group: Overview\n(Post-quantum, but only with a group other than X25519MLKEM768 — so most clients still get a classical key exchange.)\n0.2.0\nThis cause code is new in pqdoctor 0.2.0. It comes from the group survey, which is on by default for one host and --groups for scans. Without the survey, such a server is reported as no-mlkem.\n\nThe server does post-quantum key exchange, just not with X25519MLKEM768. Offered only SecP256r1MLKEM768, SecP384r1MLKEM1024 or a pure ML-KEM group, it picks it. But browsers, Go, OpenSSL and rustls send X25519MLKEM768, so in practice they negotiate a classical group.\n\nThe verdict is pqWithWarning (exit status 0), with group set to the group it accepts and a warning to add X25519MLKEM768."
+  },
+  {
+    "id": "pqdoctor-causes-pq-other-group#how-pqdoctor-sees-it~0",
+    "page": "pq-other-group",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-other-group/#how-pqdoctor-sees-it",
+    "text": "pq-other-group: How pqdoctor sees it\n(Post-quantum, but only with a group other than X25519MLKEM768 — so most clients still get a classical key exchange.)\nThe “PQ only” probe (an X25519MLKEM768 share, with X25519 and P-256 also listed) gets a retry to a classical group.\n\nIn the survey, a hello offering only SecP256r1MLKEM768 (say) gets a ServerHello that picks it.\n\nThis is what a server looks like whose groups were set for CNSA 2.0 or FIPS (NIST curves only), or whose TLS stack shipped the NIST-curve hybrids first."
+  },
+  {
+    "id": "pqdoctor-causes-pq-other-group#the-fix~0",
+    "page": "pq-other-group",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pq-other-group/#the-fix",
+    "text": "pq-other-group: The fix\n(Post-quantum, but only with a group other than X25519MLKEM768 — so most clients still get a classical key exchange.)\nPut X25519MLKEM768 first and keep the group you have:\n\nssl_ecdh_curve X25519MLKEM768:SecP256r1MLKEM768:X25519:prime256v1;\n\nSSLOpenSSLConfCmd Groups X25519MLKEM768:SecP256r1MLKEM768:X25519:prime256v1\n\npqdoctor fix --config PATH does this for you for nginx, Apache, HAProxy, Postfix and Dovecot."
+  },
+  {
+    "id": "pqdoctor-causes-kyber-draft-only#_top~0",
+    "page": "kyber-draft-only",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/kyber-draft-only/",
+    "text": "kyber-draft-only: Overview\n(The server only knows the pre-standard X25519Kyber768Draft00 group, which browsers have dropped.)\nThe server supports the pre-standard Kyber draft group, but not final ML-KEM. It only knows X25519Kyber768Draft00 (0x6399), which browsers have dropped.\n\nIn the study, 1 of 3,439 non-post-quantum origins."
+  },
+  {
+    "id": "pqdoctor-causes-kyber-draft-only#how-pqdoctor-sees-it~0",
+    "page": "kyber-draft-only",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/kyber-draft-only/#how-pqdoctor-sees-it",
+    "text": "kyber-draft-only: How pqdoctor sees it\n(The server only knows the pre-standard X25519Kyber768Draft00 group, which browsers have dropped.)\nThe Kyber draft hello (probe 4) gets X25519Kyber768Draft00. The ML-KEM hello (probe 2) doesn’t get a post-quantum group."
+  },
+  {
+    "id": "pqdoctor-causes-kyber-draft-only#the-fix~0",
+    "page": "kyber-draft-only",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/kyber-draft-only/#the-fix",
+    "text": "kyber-draft-only: The fix\n(The server only knows the pre-standard X25519Kyber768Draft00 group, which browsers have dropped.)\nMove from the Kyber draft to final ML-KEM. Upgrade the TLS library to one with X25519MLKEM768 (0x11EC). pqdoctor also prints the upgrade fix for the stack it finds."
+  },
+  {
+    "id": "pqdoctor-causes-kyber-draft-only#not-shown-in-the-fix-lab~0",
+    "page": "kyber-draft-only",
+    "section": "Not shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/kyber-draft-only/#not-shown-in-the-fix-lab",
+    "text": "kyber-draft-only: Not shown in the fix lab\n(The server only knows the pre-standard X25519Kyber768Draft00 group, which browsers have dropped.)\nNo maintained TLS stack still ships X25519Kyber768Draft00 alone, so there’s no real server to test against. This cause is covered by unit tests only."
+  },
+  {
+    "id": "pqdoctor-causes-pinned-nist#_top~0",
+    "page": "pinned-nist",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pinned-nist/",
+    "text": "pinned-nist: Overview\n(TLS 1.3 without ML-KEM, and the server prefers NIST P-curves. Almost always a hand-written curve list.)\nTLS 1.3 works, but the server only negotiates NIST P-curves and prefers them over X25519. That’s almost always a hand-set curve list that leaves out X25519MLKEM768, or a TLS library too old to have it.\n\nThis was 3.2% of the non-post-quantum origins in the study: 109 of 3,439."
+  },
+  {
+    "id": "pqdoctor-causes-pinned-nist#how-pqdoctor-sees-it~0",
+    "page": "pinned-nist",
+    "section": "How pqdoctor sees it",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pinned-nist/#how-pqdoctor-sees-it",
+    "text": "pinned-nist: How pqdoctor sees it\n(TLS 1.3 without ML-KEM, and the server prefers NIST P-curves. Almost always a hand-written curve list.)\nA client offering an X25519 key share is asked to retry with P-256 or P-384, or\n\nonly the P-256 / P-384 hello (probe 7) completes."
+  },
+  {
+    "id": "pqdoctor-causes-pinned-nist#the-fix~0",
+    "page": "pinned-nist",
+    "section": "The fix",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pinned-nist/#the-fix",
+    "text": "pinned-nist: The fix\n(TLS 1.3 without ML-KEM, and the server prefers NIST P-curves. Almost always a hand-written curve list.)\nPut X25519MLKEM768 at the front of the hand-set list:\n\n# Apache (mod_ssl on OpenSSL 3.5+)\n\nSSLOpenSSLConfCmd Groups X25519MLKEM768:X25519:prime256v1\n\n# nginx\n\nssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;\n\nThe TLS library still has to have ML-KEM (OpenSSL 3.5+). Every server is on Fixes by server."
+  },
+  {
+    "id": "pqdoctor-causes-pinned-nist#shown-in-the-fix-lab~0",
+    "page": "pinned-nist",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pinned-nist/#shown-in-the-fix-lab",
+    "text": "pinned-nist: Shown in the fix lab\n(TLS 1.3 without ML-KEM, and the server prefers NIST P-curves. Almost always a hand-written curve list.)\nAn OpenSSL 3.5 server with groups pinned to P-256:P-384 was reported not post-quantum. After the Apache snippet’s Groups X25519MLKEM768:X25519:prime256v1, it was post-quantum. A POP3 STARTTLS server pinned the same way was fixed by the Dovecot list."
+  },
+  {
+    "id": "pqdoctor-causes-pinned-nist#in-the-study~0",
+    "page": "pinned-nist",
+    "section": "In the study",
+    "url": "https://pqdoctor.com/pqdoctor/causes/pinned-nist/#in-the-study",
+    "text": "pinned-nist: In the study\n(TLS 1.3 without ML-KEM, and the server prefers NIST P-curves. Almost always a hand-written curve list.)\nServer header for pinned-nist origins: unknown 83, nginx 9, iis 7, aws 5, apache 4."
+  },
+  {
+    "id": "pqdoctor-causes-no-answer#_top~0",
+    "page": "no-tls, no-reply, connect-failed",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-answer/",
+    "text": "no-tls, no-reply, connect-failed: Overview\n(When pqdoctor can't get a TLS answer, it says so instead of guessing.)\nThese three causes mean pqdoctor couldn’t get far enough to say anything about post-quantum. It reports that plainly rather than guessing."
+  },
+  {
+    "id": "pqdoctor-causes-no-answer#no-tls~0",
+    "page": "no-tls, no-reply, connect-failed",
+    "section": "no-tls",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-answer/#no-tls",
+    "text": "no-tls, no-reply, connect-failed: no-tls\n(When pqdoctor can't get a TLS answer, it says so instead of guessing.)\nTLS alerts to every hello, including the classical and P-curve ones. Verdict noTls13: “No TLS handshake at all”. Common reasons are that the port isn’t TLS, or the server needs a different SNI name.\n\nIn the study: 41 of 3,439 non-post-quantum origins (1.2%)."
+  },
+  {
+    "id": "pqdoctor-causes-no-answer#no-reply~0",
+    "page": "no-tls, no-reply, connect-failed",
+    "section": "no-reply",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-answer/#no-reply",
+    "text": "no-tls, no-reply, connect-failed: no-reply\n(When pqdoctor can't get a TLS answer, it says so instead of guessing.)\nOnly timeouts or resets, with no TLS alert at all. Verdict unreachable: “No reliable reply”. The server may be down, behind a firewall, or rate-limiting repeated connections. Re-check in a minute.\n\nThis verdict exists because of a mistake. An early version fired its probes in parallel, and www.debian.org rate-limited the burst, so pqdoctor said “No TLS handshake at all”. That was confidently wrong. Now the probes run one at a time, a silent probe is retried once, and silence is reported as silence."
+  },
+  {
+    "id": "pqdoctor-causes-no-answer#connect-failed~0",
+    "page": "no-tls, no-reply, connect-failed",
+    "section": "connect-failed",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-answer/#connect-failed",
+    "text": "no-tls, no-reply, connect-failed: connect-failed\n(When pqdoctor can't get a TLS answer, it says so instead of guessing.)\nThe TCP connection couldn’t be opened. Verdict unreachable: “Couldn’t reach host:port”. In a multi-address report, an address that’s unreachable from this machine (for example, IPv6 with no IPv6 route) is marked as such, not as a disagreement."
+  },
+  {
+    "id": "pqdoctor-causes-no-answer#in-the-study~0",
+    "page": "no-tls, no-reply, connect-failed",
+    "section": "In the study",
+    "url": "https://pqdoctor.com/pqdoctor/causes/no-answer/#in-the-study",
+    "text": "no-tls, no-reply, connect-failed: In the study\n(When pqdoctor can't get a TLS answer, it says so instead of guessing.)\n523 of the 5,139 probed origins gave no TLS answer on port 443. They’re left out of every share, which is why the denominator is 4,616."
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#_top~0",
+    "page": "Fixes by server",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/",
+    "text": "Fixes by server: Overview\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\npqdoctor reads the Server header (or a mail server’s greeting) to pick the fix. These are the lines it prints, word for word.\n\nWhat the fix lab proves\nThe group strings for nginx, Apache, Node, Postfix and Dovecot go through the same OpenSSL call (SSL_CTX_set1_groups_list) that those servers use, on real OpenSSL 3.5 servers. Each one made the server post-quantum (30 / 30). The nginx, Apache, HAProxy, Postfix, Dovecot and Exim binaries themselves weren’t run: they need Linux. Go was run for real (Go 1.25).\n\nHybrid post-quantum needs TLS 1.3, and a TLS library that has ML-KEM: OpenSSL 3.5+, current BoringSSL and AWS-LC, Go 1.24+, or rustls with aws-lc-rs."
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#nginx~0",
+    "page": "Fixes by server",
+    "section": "nginx",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#nginx",
+    "text": "Fixes by server: nginx\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nnginx gets PQ from its TLS library. OpenSSL 3.5 or newer is needed (Ubuntu 25.04+, Debian 13+, or an nginx build linked against 3.5). Check with nginx -V.\n\nssl_protocols TLSv1.2 TLSv1.3;\n\nssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#apache~0",
+    "page": "Fixes by server",
+    "section": "Apache",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#apache",
+    "text": "Fixes by server: Apache\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nNeeds mod_ssl built against OpenSSL 3.5 or newer (httpd -V, openssl version).\n\nSSLProtocol -all +TLSv1.2 +TLSv1.3\n\nSSLOpenSSLConfCmd Groups X25519MLKEM768:X25519:prime256v1"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#haproxy~0",
+    "page": "Fixes by server",
+    "section": "HAProxy",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#haproxy",
+    "text": "Fixes by server: HAProxy\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nUse HAProxy built with OpenSSL 3.5+ or AWS-LC (haproxy -vv).\n\nhaproxy.cfg\nglobal\n\nssl-default-bind-curves X25519MLKEM768:X25519:P-256"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#caddy~0",
+    "page": "Fixes by server",
+    "section": "Caddy",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#caddy",
+    "text": "Fixes by server: Caddy\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nGo 1.24 offers X25519MLKEM768 by default. Upgrade Caddy and remove any custom curves option, or add x25519mlkem768 to it.\n\nCaddyfile\ntls {\n\ncurves x25519mlkem768 x25519 secp256r1\n\n}"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#nodejs~0",
+    "page": "Fixes by server",
+    "section": "Node.js",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#nodejs",
+    "text": "Fixes by server: Node.js\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nCheck node -p process.versions.openssl. It must be 3.5 or newer.\n\nhttps.createServer({ ...opts, ecdhCurve: 'X25519MLKEM768:X25519:P-256' }, app)"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#go~0",
+    "page": "Fixes by server",
+    "section": "Go",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#go",
+    "text": "Fixes by server: Go\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nGo 1.24+ includes X25519MLKEM768 by default. If CurvePreferences is set, remove it.\n\ncfg.CurvePreferences = nil // Go 1.24+ default includes X25519MLKEM768"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#any-other-openssl-based-se~0",
+    "page": "Fixes by server",
+    "section": "Any other OpenSSL-based server",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#any-other-openssl-based-server",
+    "text": "Fixes by server: Any other OpenSSL-based server\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nGroups = X25519MLKEM768:X25519:prime256v1"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#iis--windows-schannel~0",
+    "page": "Fixes by server",
+    "section": "IIS / Windows Schannel",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#iis--windows-schannel",
+    "text": "Fixes by server: IIS / Windows Schannel\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nPQ key exchange in Schannel depends on the Windows Server version. If yours can’t offer ML-KEM yet, put Cloudflare Tunnel (or a PQ-capable reverse proxy) in front."
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#java~0",
+    "page": "Fixes by server",
+    "section": "Java",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#java",
+    "text": "Fixes by server: Java\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nHybrid ML-KEM in JSSE depends on the JDK release. Until yours has it, terminate TLS in a PQ-capable proxy (nginx or HAProxy on OpenSSL 3.5), or use Cloudflare Tunnel."
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#mail-servers~0",
+    "page": "Fixes by server",
+    "section": "Mail servers",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#mail-servers",
+    "text": "Fixes by server: Mail servers\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nPostfix, Dovecot, Exim and Exchange are on the Mail (STARTTLS) page."
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#cant-upgrade-cloudflare-tu~0",
+    "page": "Fixes by server",
+    "section": "Can’t upgrade? Cloudflare Tunnel",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#cant-upgrade-cloudflare-tunnel",
+    "text": "Fixes by server: Can’t upgrade? Cloudflare Tunnel\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nRun cloudflared next to the server. The tunnel from the server to Cloudflare already uses post-quantum key agreement, so the hop that leaves your network is protected even if the server isn’t.\n\ncloudflared tunnel run <tunnel-name>"
+  },
+  {
+    "id": "pqdoctor-causes-fixes-by-server#when-the-curve-list-is-han~0",
+    "page": "Fixes by server",
+    "section": "When the curve list is hand-set",
+    "url": "https://pqdoctor.com/pqdoctor/causes/fixes-by-server/#when-the-curve-list-is-hand-set",
+    "text": "Fixes by server: When the curve list is hand-set\n(The exact config lines pqdoctor prints for nginx, Apache, HAProxy, Caddy, Node, Go, IIS, Java, mail servers, and the Cloudflare Tunnel fallback.)\nIf pqdoctor sees the server prefers NIST P-curves (pinned-nist), it adds a note to the stack’s fix. A hand-written curve list has to include the PQ group, at the front."
+  },
+  {
+    "id": "pqdoctor-reference-probes#_top~0",
+    "page": "Probes and wire format",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/",
+    "text": "Probes and wire format: Overview\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nThis page documents pqdoctor 0.2.0’s network behaviour byte for byte (the seven probes, the certificate probes, the HTTP request and SSH are unchanged from 0.1.0; everything else here is new in 0.2.0 and opt-in or on only for one host), for anyone who needs to know exactly what reaches their server: network teams, IDS rule writers, and anyone reviewing the tool."
+  },
+  {
+    "id": "pqdoctor-reference-probes#the-seven-clienthellos~0",
+    "page": "Probes and wire format",
+    "section": "The seven ClientHellos",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#the-seven-clienthellos",
+    "text": "Probes and wire format: The seven ClientHellos\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nEvery key-exchange probe is a TLS 1.3 ClientHello with the same base. Only the groups, the key share and how it’s sent change.\n\nid | supported_groups | key_share | Sent\ntls13Classical | X25519, P-256, P-384 | X25519 | Whole\npqOnly | X25519MLKEM768, X25519, P-256 | X25519MLKEM768 | Whole\npqPreference | X25519MLKEM768, X25519, P-256 | X25519 | Whole\nkyberDraft | X25519Kyber768Draft00, X25519, P-256 | X25519Kyber768Draft00 | Whole\npqSplit | Same hello as pqOnly | X25519MLKEM768 | Split\nbigClassicalSplit | X25519, P-256 | X25519, padded to pqOnly’s size | Split\nnistOnly | P-256, P-384 | P-256 | Whole\nThe common base\n\nField | Value\nRecord version | 0x0301\nlegacy_version | 0x0303\nRandom, session ID | 32 bytes each\nsupported_versions | TLS 1.3, TLS 1.2\nCipher suites (15) | 1301 1302 1303 c02b c02f c02c c030 cca9 cca8 c013 c014 009c 009d 002f 0035\nsignature_algorithms | 0403 0804 0401 0503 0805 0501 0806 0601 0807\nALPN | h2, http/1.1. Left out under STARTTLS\nSNI | The host name, lowercased. None for IP addresses\npsk_key_exchange_modes | psk_dhe_ke\nExtension order: server_name, extended_master_secret, renegotiation_info, supported_groups, ec_point_formats, signature_algorithms, ALPN, supported_versions, psk_key_exchange_modes, key_share, then padding last when used.\n\nGroups and key shares"
+  },
+  {
+    "id": "pqdoctor-reference-probes#the-seven-clienthellos~1",
+    "page": "Probes and wire format",
+    "section": "The seven ClientHellos",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#the-seven-clienthellos",
+    "text": "Probes and wire format: The seven ClientHellos\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nGroup | Codepoint | Key share bytes\nX25519 | 0x001D | 32\nP-256 (secp256r1) | 0x0017 | 65\nP-384 (secp384r1) | 0x0018 | 97\nX25519MLKEM768 | 0x11EC | 1,216: ML-KEM-768 key (1,184) then X25519 (32)\nX25519Kyber768Draft00 | 0x6399 | 1,216: X25519 (32) then the Kyber key (1,184)\n| SecP256r1MLKEM768 | 0x11EB | 1,249: P-256 (65) then ML-KEM-768 (1,184) | | SecP384r1MLKEM1024 | 0x11ED | 1,665: P-384 (97) then ML-KEM-1024 (1,568) | | MLKEM512 / MLKEM768 / MLKEM1024 | 0x0200 / 0x0201 / 0x0202 | 800 / 1,184 / 1,568 | Codepoints are from IANA’s TLS Supported Groups registry; the share layouts from RFC 10024 (ML-KEM first only in X25519MLKEM768) and draft-ietf-tls-mlkem. The last five are only sent by the group survey.\n\nThe key shares are placeholders. The key-exchange probes only read the server’s first reply, so no shared secret is ever computed. The ML-KEM part is a valid encapsulation key with all-zero coefficients and a 32-byte seed, and the classical shares are fixed points. No probe does real cryptography, and none could complete a handshake.\n\nPadding and splitting\n\nbigClassicalSplit gets a padding extension that makes its handshake exactly as long as pqOnly’s (over 1,300 bytes). That’s the control: same size, same split, no PQ group.\n\nSplit sends the first 200 bytes of the record (including the 5-byte record header), flushes, waits 40 ms, then sends the rest. TCP_NODELAY is set, so the two writes go as separate TCP segments."
+  },
+  {
+    "id": "pqdoctor-reference-probes#the-certificate-probes~0",
+    "page": "Probes and wire format",
+    "section": "The certificate probes",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#the-certificate-probes",
+    "text": "Probes and wire format: The certificate probes\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nRun only for one host by default (and in scans with --auth), and only when tls13Classical got a TLS 1.3 reply. They’re the one place pqdoctor does real cryptography.\n\n|\nProbe 1: “Classical schemes, then ML-DSA” | Probe 2: “Only ML-DSA schemes”\nsupported_versions | TLS 1.3 only | TLS 1.3 only\nGroups and key share | X25519, with a real X25519 key | Same\nCipher suites | TLS_AES_128_GCM_SHA256 only | Same\nsignature_algorithms | The common list, then 0904 0905 0906 | 0904 0905 0906 only\npqdoctor completes the X25519 exchange, runs the TLS 1.3 key schedule, decrypts the server’s Certificate and CertificateVerify, and hangs up. It never sends Finished. The two probes are 120 ms apart, and a response is capped at 512 KB."
+  },
+  {
+    "id": "pqdoctor-reference-probes#group-survey~0",
+    "page": "Probes and wire format",
+    "section": "Group survey",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#group-survey",
+    "text": "Probes and wire format: Group survey\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nOn for one host (--no-groups to skip), --groups for scans. One hello per group below, offering only that group in supported_groups and key_share, so a ServerHello that picks it means the server accepts it. Same base as the seven probes, sent whole, one at a time, 120 ms apart, retried once on silence. X25519MLKEM768’s answer is taken from pqOnly, so it’s 5 more connections:\n\nSecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM512, MLKEM768, MLKEM1024.\n\nA server that only accepts one of these gets pq-other-group. The SecP384r1MLKEM1024 hello is about 1.9 KB."
+  },
+  {
+    "id": "pqdoctor-reference-probes#slh-dsa-probe~0",
+    "page": "Probes and wire format",
+    "section": "SLH-DSA probe",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#slh-dsa-probe",
+    "text": "Probes and wire format: SLH-DSA probe\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\n--slh-dsa: one more certificate probe like probe 2 above, with signature_algorithms = the 12 IANA-registered SLH-DSA schemes 0911–091C. IANA has no composite (ML-DSA + classical) signature codepoints, so none are offered. Merkle Tree Certificates aren’t checked."
+  },
+  {
+    "id": "pqdoctor-reference-probes#trust~0",
+    "page": "Probes and wire format",
+    "section": "Trust",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#trust",
+    "text": "Probes and wire format: Trust\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nNo probe of its own for a TLS 1.3 server: it validates the chain certificate probe 1 decrypted. For a TLS 1.2-only server, one hello without supported_versions (TLS 1.2), read up to ServerHelloDone; the Certificate is plaintext there."
+  },
+  {
+    "id": "pqdoctor-reference-probes#quic~0",
+    "page": "Probes and wire format",
+    "section": "QUIC",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#quic",
+    "text": "Probes and wire format: QUIC\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\npqdoctor quic or --quic: three exchanges on UDP, each a fresh QUIC connection (random 8-byte connection IDs):\n\n|\nsupported_groups | key_share\nClassical | X25519, P-256 | X25519\nPQ only | X25519MLKEM768, X25519, P-256 | X25519MLKEM768\nPQ preference | X25519MLKEM768, X25519, P-256 | X25519\nThe ClientHello: TLS 1.3 only, an empty legacy_session_id, suites 1301 1302 1303, ALPN h3, and quic_transport_parameters (extension 57) with max_idle_timeout 30 s, max_udp_payload_size 1472, initial_max_data 1 MiB, stream data 256 KiB, 100 streams each way, and initial_source_connection_id. It goes in CRYPTO frames in Initial packets (4-byte packet numbers, PADDING to exactly 1,200 bytes per datagram), two datagrams for the PQ hello. 3 s per exchange, retried once on a timeout."
+  },
+  {
+    "id": "pqdoctor-reference-probes#dtls~0",
+    "page": "Probes and wire format",
+    "section": "DTLS",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#dtls",
+    "text": "Probes and wire format: DTLS\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\npqdoctor dtls or --dtls: three probes on UDP, each from a fresh socket. DTLSPlaintext records (record version 0xFEFF, epoch 0) with handshake fragments of at most 1,100 bytes. legacy_version 0xFEFD, an empty session ID and cookie, no ALPN.\n\n|\nsupported_versions | Groups / key share\nDTLS 1.3 / 1.2 classical | 0xFEFC, 0xFEFD | X25519, P-256, P-384 / X25519\nDTLS 1.3 PQ | 0xFEFC, 0xFEFD | X25519MLKEM768, X25519, P-256 / X25519MLKEM768\nDTLS 1.2 only | — | X25519, P-256, P-384\nA HelloVerifyRequest or a HelloRetryRequest cookie is answered once, with the same random. 4 s per probe."
+  },
+  {
+    "id": "pqdoctor-reference-probes#audit~0",
+    "page": "Probes and wire format",
+    "section": "Audit",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#audit",
+    "text": "Probes and wire format: Audit\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\n--audit, one at a time, 150 ms apart, retried once on silence:\n\n5 version probes: legacy_version 0x0300 (record 0x0300), 0x0301, 0x0302 and 0x0303 without supported_versions, and TLS 1.3 through supported_versions.\n\n51 suite probes: one TLS 1.2 suite each (see the list), read up to ServerKeyExchange / ServerHelloDone.\n\n1 preference probe: the weakest and strongest accepted suites, weakest first.\n\nOnly ClientHellos. No exploit, padding-oracle, Heartbleed or renegotiation bytes."
+  },
+  {
+    "id": "pqdoctor-reference-probes#middlebox~0",
+    "page": "Probes and wire format",
+    "section": "Middlebox",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#middlebox",
+    "text": "Probes and wire format: Middlebox\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\n--middlebox: 8 connections, see the variants. The splits are 40 ms apart with TCP_NODELAY."
+  },
+  {
+    "id": "pqdoctor-reference-probes#proxies~0",
+    "page": "Probes and wire format",
+    "section": "Proxies",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#proxies",
+    "text": "Probes and wire format: Proxies\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nWith --proxy, every TCP connection above first does CONNECT host:port HTTP/1.1 (http) or a SOCKS5 CONNECT (RFC 1928, with RFC 1929 credentials) to the proxy. The TLS bytes after it are unchanged. QUIC and DTLS don’t use the proxy."
+  },
+  {
+    "id": "pqdoctor-reference-probes#timing-and-retries~0",
+    "page": "Probes and wire format",
+    "section": "Timing and retries",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#timing-and-retries",
+    "text": "Probes and wire format: Timing and retries\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\n|\nValue\nConnect timeout | 5 s\nRead timeout | 5 s, one deadline from after the hello is written\nGap between probes (and between addresses) | 120 ms\nRetry | Once, after 700 ms, for a probe with no reply (timeout, reset, closed). A retry’s reply is kept only if it isn’t silent\nStop early | If the first probe can’t connect, the rest are skipped\nNot TLS | Over 64 KiB without a ServerHello\nSTARTTLS upgrade | 10 s deadline. One upgrade first, then again before every probe"
+  },
+  {
+    "id": "pqdoctor-reference-probes#the-http-request~0",
+    "page": "Probes and wire format",
+    "section": "The HTTP request",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#the-http-request",
+    "text": "Probes and wire format: The HTTP request\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nOne plain-HTTP request on port 80, to tailor the fixes:\n\nHEAD / HTTP/1.1\n\nHost: example.com\n\nUser-Agent: pqdoctor/0.4.0 (post-quantum TLS check; handshake-only)\n\nConnection: close\n\n3 s connect and read timeouts. Up to 8 KiB is read, stopping at the end of the headers.\n\n--contact C adds ; contact: C inside the parentheses. --user-agent replaces it. A value with a line break is refused.\n\nSkipped for IP addresses, with --no-http, under STARTTLS, and for any address but the first."
+  },
+  {
+    "id": "pqdoctor-reference-probes#starttls~0",
+    "page": "Probes and wire format",
+    "section": "STARTTLS",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#starttls",
+    "text": "Probes and wire format: STARTTLS\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nProtocol | Commands sent\nSMTP | EHLO pqdoctor.invalid, then STARTTLS\nIMAP | pq1 STARTTLS\nPOP3 | STLS\nFTP (0.2.0) | AUTH TLS → 234 (RFC 4217)\nXMPP (0.2.0) | A jabber:client stream header to the host name, then <starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/> → <proceed/>\nLDAP (0.2.0) | ExtendedRequest 1.3.6.1.4.1.1466.20037, message ID 1 (31 bytes of BER) → resultCode 0\nPostgreSQL (0.2.0) | SSLRequest (length 8, code 80877103) → S\nMySQL (0.2.0) | Reads the server’s handshake, checks CLIENT_SSL, sends a 32-byte SSLRequest (sequence 1)\nRDP (0.2.0) | TPKT + X.224 Connection Request with RDP_NEG_REQ, PROTOCOL_SSL | PROTOCOL_HYBRID → Connection Confirm; TLS follows (CredSSP is never reached)\nPicked by port when --starttls isn’t given: 25 and 587 SMTP, 143 IMAP, 110 POP3, and in the CLI from 0.2.0 21 FTP, 5222 XMPP, 389 LDAP, 5432 PostgreSQL, 3306 MySQL, 3389 RDP. Each reads exactly the go-ahead’s bytes, so the next byte is the server’s TLS reply."
+  },
+  {
+    "id": "pqdoctor-reference-probes#ssh~0",
+    "page": "Probes and wire format",
+    "section": "SSH",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#ssh",
+    "text": "Probes and wire format: SSH\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\npqdoctor sends SSH-2.0-pqdoctor_0.2.0, reads the server’s identification and its first binary packet (KEXINIT), and closes the connection. Limits: 8 KiB of banner lines before the identification, a 255-byte identification, packets up to 256 KiB, and up to 8 IGNORE or DEBUG packets skipped. 5 s connect, read and write timeouts. Only the first address is checked."
+  },
+  {
+    "id": "pqdoctor-reference-probes#limits~0",
+    "page": "Probes and wire format",
+    "section": "Limits",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#limits",
+    "text": "Probes and wire format: Limits\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\n|\nValue\nAddresses per host | Up to 6, IPv4 first, duplicates removed. Single-host checks only\nScan concurrency | Default 4, max 32\nScan rate | Default 2 new hosts a second, max 20\nProbes per host | One at a time, always"
+  },
+  {
+    "id": "pqdoctor-reference-probes#identifying-pqdoctor-traffic~0",
+    "page": "Probes and wire format",
+    "section": "Identifying pqdoctor traffic",
+    "url": "https://pqdoctor.com/pqdoctor/reference/probes/#identifying-pqdoctor-traffic",
+    "text": "Probes and wire format: Identifying pqdoctor traffic\n(Exactly what pqdoctor sends - every ClientHello's groups, key shares, sizes and splits, the certificate probes, timeouts, retries and limits.)\nTo recognise or filter pqdoctor on your network:\n\nThe User-Agent on port 80 starts with pqdoctor/.\n\nThe SSH client identification is SSH-2.0-pqdoctor_<version>.\n\nFrom one source, a default single-host check is up to 7 TLS connections (plus up to 7 retries), 5 group-survey connections, 2 certificate connections and 1 HTTP request, all within a few seconds. --audit adds about 57, --middlebox 8, --slh-dsa 1.\n\nQUIC Initials carry ALPN h3 and pqdoctor’s transport parameters; DTLS hellos carry no ALPN."
+  },
+  {
+    "id": "pqdoctor-reference-json#_top~0",
+    "page": "JSON output",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/",
+    "text": "JSON output: Overview\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\npqdoctor has three JSON shapes:\n\nCommand | Output | Shape\npqdoctor <host> --json | One pretty-printed object | Report\npqdoctor scan <file> --json | One compact object per line (JSON Lines), in completion order | Scan record\npqdoctor ssh <host> --json | One pretty-printed object | SSH report\npqdoctor quic <host> --json | One pretty-printed object | QuicReport (0.2.0)\npqdoctor dtls <host:port> --json | One pretty-printed object | DtlsReport (0.2.0)\npqdoctor diff a b --json | One pretty-printed object | Diff (0.2.0)\npqdoctor mail <domain> --json | One pretty-printed object | MailReport (0.4.0)\npqdoctor grade <domain> --json | One pretty-printed object | GradeReport (0.4.0)\nCompatibility: fields added in 0.2.0 are left out of the JSON when their check didn’t run, so a 0.1.0 consumer reading a default library report sees exactly the 0.1.0 shape. Cause codes are only ever added, never renamed."
+  },
+  {
+    "id": "pqdoctor-reference-json#conventions~0",
+    "page": "JSON output",
+    "section": "Conventions",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#conventions",
+    "text": "JSON output: Conventions\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nField names are camelCase. Enum values are camelCase (verdicts) or kebab-case (cause codes).\n\nTLS numbers (versions, cipher suites, groups, extensions) are plain decimal integers. 772 is TLS 1.3 (0x0304). 4588 is X25519MLKEM768 (0x11EC).\n\nOptional fields are null unless noted as omitted when empty.\n\nTimes are Unix milliseconds.\n\nheadline and cause are human sentences and can change between versions. Match on verdict and causeCode, which are stable."
+  },
+  {
+    "id": "pqdoctor-reference-json#report~0",
+    "page": "JSON output",
+    "section": "Report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#report",
+    "text": "JSON output: Report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\npqdoctor <host> --json."
+  },
+  {
+    "id": "pqdoctor-reference-json#report~1",
+    "page": "JSON output",
+    "section": "Report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#report",
+    "text": "JSON output: Report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nField | Type\nhost | string | The name checked, lowercased, without a trailing dot\nport | number\nip | string | null | The address that was probed\nverdict | Verdict\nheadline | string | One-line result, e.g. \"Not post-quantum\"\ncause | string | The explanation sentence\ncauseCode | Cause | Stable reason code\ngroup | string | null | The PQ group negotiated, e.g. \"X25519MLKEM768\". Only set when post-quantum\nprefersPq | boolean | The server asked a client with only an X25519 share to retry with ML-KEM\nwarnings | string[] | E.g. split PQ hellos dropped, or PQ only when offered first\nfixes | Fix[] | In the order to try them. Empty when post-quantum\nfingerprint | Fingerprint\nprobes | ProbeResult[] | All seven probes, in order\nverify | string | An openssl s_client command to confirm by hand\ncheckedAt | number | When the check ran\nelapsedMs | number | Time for the main address’s check\nauth | AuthReport | The certificate check. Omitted when it didn’t run\nstarttls | string | smtp, imap, pop3; from 0.2.0 also ftp, xmpp, ldap, postgres, mysql, rdp. Omitted when not used\naddresses | AddressResult[] | Every address, when the name has more than one. Omitted otherwise\nreprobes | AddressResult[] | 0.4.0: the same address checked again after a non-PQ answer (--reprobe), each re-check’s answer. One that negotiated ML-KEM makes the verdict mixed. Omitted when there were none\ngroups | GroupSurvey | 0.2.0. Omitted when the survey didn’t run\ntrust | TrustReport | 0.2.0. Omitted when it didn’t run\nsignatures | SignatureReport | 0.2.0, --slh-dsa. Omitted otherwise\naudit | AuditReport | 0.2.0, --audit. O"
+  },
+  {
+    "id": "pqdoctor-reference-json#report~2",
+    "page": "JSON output",
+    "section": "Report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#report",
+    "text": "JSON output: Report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nmitted otherwise\nmiddlebox | MiddleboxReport | 0.2.0, --middlebox. Omitted otherwise\nquic | QuicReport | 0.2.0, --quic. Omitted otherwise\ndtls | DtlsReport | 0.2.0, --dtls. Omitted otherwise\nproxy | string | 0.2.0: the proxy used, without credentials, e.g. \"socks5h://127.0.0.1:1080\". Omitted without one\nUnder STARTTLS, the Cloudflare Tunnel fix is left out of fixes: a tunnel carries HTTP, not mail. With a proxy that resolves names (http://, socks5h://), ip is null.\n\nVerdict\n\nValue | Meaning | Exit status\npq | Negotiates a post-quantum group | 0\npqWithWarning | Post-quantum, with a warning (split PQ hellos dropped; not on every address; only a non-X25519 PQ group) | 0\nnotPq | TLS 1.3 without post-quantum | 1\nnoTls13 | TLS 1.2 only, or no TLS handshake at all | 1\nbroken | Something in the path breaks on the PQ hello | 1\nunreachable | Couldn’t connect, or nothing answered | 2\nmixed | 0.4.0: post-quantum on some connections and not on others, to the same address: a re-check (reprobes) negotiated ML-KEM after a non-PQ answer. Typically a server pool mid-rollout; not a regression. See Mixed | 1\nCause\n\npq-preferred, pq, pq-split-dropped, pq-other-group (0.2.0), no-mlkem, pinned-nist, kyber-draft-only, tls12-only, large-hello-dropped, pq-group-rejected, no-tls, no-reply, connect-failed. Each is explained on Causes and fixes.\n\nFix\n\nField | Type\ntitle | string | E.g. \"nginx: link against OpenSSL 3.5+ and list the PQ group\"\ndetail | string | Why, and what to check\nsnippet | string | null | Config lines to paste, newline-separated\nFingerprint"
+  },
+  {
+    "id": "pqdoctor-reference-json#report~3",
+    "page": "JSON output",
+    "section": "Report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#report",
+    "text": "JSON output: Report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nField | Type\nserverHeader | string | null | The HTTP Server header, or a mail server’s greeting line (up to 160 characters)\nedge | string | 0.4.0: the CDN or edge platform the HTTP response headers name (cf-ray, x-amz-cf-id, x-served-by: cache-…, AkamaiGHost, x-azure-ref, x-iinfo, x-sucuri-id, …), even when the address isn’t on its published network: cloudflare, cloudfront, fastly, akamai, azure-front-door, imperva, sucuri, bunny, ddos-guard, qrator, arvancloud, vercel, netlify. Omitted when none\nstack | string | null | The software pqdoctor recognized: nginx, apache, caddy, haproxy, iis, envoy, litespeed, cloudflare, google, akamai, aws, vercel, netlify, github, dotnet, java, node, postfix, exim, dovecot, exchange; from 0.2.0 vsftpd, proftpd, mysql, postgres, windows (RDP)\ntlsVersion | number | null | From the classical TLS 1.3 probe\ncipher | number | null | Cipher suite from the same probe\nextensions | number[] | Extension types in the server’s reply\nProbeResult\n\nField | Type\nid | string | tls13Classical, pqOnly, pqPreference, kyberDraft, pqSplit, bigClassicalSplit, nistOnly. See Probes\nlabel | string | E.g. \"Offer only an X25519MLKEM768 key share\"\nreply | Reply\nsummary | string | E.g. \"TLS 1.3: asked to retry with X25519\"\nms | number | Including a retry, if there was one\nReply\n\nTagged by kind:"
+  },
+  {
+    "id": "pqdoctor-reference-json#report~4",
+    "page": "JSON output",
+    "section": "Report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#report",
+    "text": "JSON output: Report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nkind | Other fields | Meaning\nhello | hrr (bool), version, cipher, group (number | null), extensions (number[]) | A ServerHello, or a HelloRetryRequest when hrr is true. version comes from supported_versions when present\nalert | level, description | A TLS alert, e.g. description 40 handshake_failure, 70 protocol_version\nclosed | — | The server closed the connection\nreset | — | Connection reset\ntimeout | — | No reply within 5 s\nnotTls | — | The reply wasn’t TLS (or over 64 KiB arrived without a ServerHello)\nconnectFailed | message | Couldn’t open the connection\n{ \"kind\": \"hello\", \"hrr\": true, \"version\": 772, \"cipher\": 4865, \"group\": 29, \"extensions\": [43, 51] }\n\nThat’s a HelloRetryRequest for TLS 1.3 (772), TLS_AES_128_GCM_SHA256 (4865 = 0x1301), asking for X25519 (29 = 0x001D).\n\nAddressResult\n\nField | Type\nip | string\nverdict | Verdict\ncauseCode | Cause\ngroup | string | null\nheadline | string\nunreachable | boolean | True when this address couldn’t be reached from here (e.g. no IPv6 route). That’s not a disagreement\ntlsVersion | string | 0.4.0: the TLS version this address answered with, \"1.3\", \"1.2\" or \"old\". Omitted when it didn’t answer\nThe first reachable address gives the main result. The others get the key-exchange probes only.\n\nAuthReport"
+  },
+  {
+    "id": "pqdoctor-reference-json#report~5",
+    "page": "JSON output",
+    "section": "Report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#report",
+    "text": "JSON output: Report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nField | Type\nchain | CertInfo[] | Leaf first: the chain a client offering classical schemes then ML-DSA gets\nchainBytes | number | Size of the Certificate message\nscheme | string | null | The CertificateVerify scheme, e.g. \"ecdsa_secp256r1_sha256\"\nmldsa | string | serves, no-cert, ignores-offer, rejects-codepoints, unknown. See ML-DSA readiness. From 0.2.0, a pinned-nist server that refuses the (X25519) certificate probe is unknown, not rejects-codepoints\nmldsaOnlyScheme | string | null | The scheme used when only ML-DSA was offered, e.g. \"mldsa44\"\nheadline | string | E.g. \"No ML-DSA certificate\"\ndetail | string\nfixes | Fix[]\nprobes | [string, string][] | [label, summary] for the two certificate probes\nCertInfo\n\nField | Type\nsubject | string | null | Common name\nissuer | string | null | Issuer common name\nkey | string | E.g. ec-p256, rsa-2048, ed25519, ml-dsa-44; from 0.2.0 SLH-DSA by OID, e.g. slh-dsa-sha2-128s\nsignature | string | What the issuer signed it with, e.g. ecdsa-sha256, ml-dsa-44\nbytes | number | DER size\npostQuantum | boolean | Key or signature is ML-DSA (and from 0.2.0 SLH-DSA or ML-KEM)\nnotBefore, notAfter | string | RFC 3339, UTC. Omitted when they don’t parse"
+  },
+  {
+    "id": "pqdoctor-reference-json#scan-record~0",
+    "page": "JSON output",
+    "section": "Scan record",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#scan-record",
+    "text": "JSON output: Scan record\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\npqdoctor scan <file> --json, one per line. --out FILE always appends these records, whatever the output format on screen.\n\nField | Type\nhost | string | The name probed. After --www-fallback, this is www.<domain>\nlisted | string | The original list entry. Omitted when it’s the same as host\nport | number\nip | string | null\nverdict | string | A Verdict, or error, skipped, resolved\ncause | string | A Cause, or error, dns, cdn-<provider>, resolved\ngroup | string | null\nprefersPq | boolean\nstack | string | null\nserver | string | null | The Server header\nedge | string | 0.4.0: the CDN or edge platform the response headers name, as in Fingerprint. Omitted when none\naddresses | object[] | 0.4.0, --all-addresses: every address checked, one (hostname, IP) pair each. See below. Omitted without the flag, or with one address\nheadline | string\ncheckedAt | number\nms | number | 0 for error records\nprotocol | string | 0.2.0: ssh or quic for those checks (in --history). Omitted for TLS over TCP\n{\"host\":\"nginx.org\",\"port\":443,\"ip\":\"3.136.61.53\",\"verdict\":\"noTls13\",\"cause\":\"tls12-only\",\"group\":null,\"prefersPq\":false,\"stack\":\"nginx\",\"server\":\"nginx/1.31.3\",\"headline\":\"Not post-quantum: TLS 1.2 only\",\"checkedAt\":1792072811037,\"ms\":1479}\n\nScan-only values:"
+  },
+  {
+    "id": "pqdoctor-reference-json#scan-record~1",
+    "page": "JSON output",
+    "section": "Scan record",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#scan-record",
+    "text": "JSON output: Scan record\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nverdict / cause | When\nmixed / any | 0.4.0: as in Verdict\nerror / dns | The name didn’t resolve\nerror / error | The check itself failed\nskipped / cdn-<provider> | The address is in a --skip-ranges network, e.g. cdn-cloudflare\nresolved / resolved | --resolve-only: resolved and filtered, not contacted\nScans check one address per host (the first IPv4, otherwise the first address) unless --all-addresses is given, and skip the certificate check unless --auth is given. From 0.4.0, --skip-ranges looks at every address of a name either way: one address in a listed network skips it.\n\naddresses\n\n0.4.0. With --all-addresses, a record for a name with more than one address gets every address, so a report can count (hostname, IP) pairs. Without the flag, or with one address, nothing new is written, and older files parse as before.\n\nField | Type\nip | string\nverdict | string | A Verdict. unreachable for an address that couldn’t be reached from here\ncause | string | A Cause\ngroup | string | The PQ group negotiated. Omitted when none\ntls | string | The TLS version the address answered with: \"1.3\", \"1.2\" or \"old\". Omitted when it didn’t answer"
+  },
+  {
+    "id": "pqdoctor-reference-json#ssh-report~0",
+    "page": "JSON output",
+    "section": "SSH report",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#ssh-report",
+    "text": "JSON output: SSH report\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\npqdoctor ssh <host> --json.\n\nField | Type\nhost, port, ip |\nAs in Report\nverdict | string | pq, draftOnly, notPq, unreachable\nheadline, cause | string\ncauseCode | string | ssh-mlkem, ssh-sntrup-only, ssh-draft-only, ssh-kex-config, ssh-old-openssh, ssh-no-pq, connect-failed\ngroup | string | null | The first post-quantum method offered\nident | object | null | { line, proto, software, comments } from the server’s identification\nsoftware | string | E.g. \"OpenSSH 10.0\"\nopenssh | [number, number] | null | OpenSSH major and minor version\nkex | string[] | Key exchange methods, in the server’s order, marker names removed\npqKex | string[] | The post-quantum ones\ndraftKex | string[] | Draft-only ones\ncnsa | boolean | Offers mlkem1024nistp384-sha384\nstrictKex | boolean | Strict key exchange (the Terrapin countermeasure)\nhostKey, ciphers, macs | string[] | Server-to-client lists\npqHostKey | string[] | 0.2.0: post-quantum host-key algorithms offered (draft names: mldsa, slh-dsa, sphincs, falcon). Omitted when none\nwarnings | string[]\nfixes | Fix[]\nverify | string | An ssh -vv command\ncheckedAt, elapsedMs | number"
+  },
+  {
+    "id": "pqdoctor-reference-json#020-sections~0",
+    "page": "JSON output",
+    "section": "0.2.0 sections",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#020-sections",
+    "text": "JSON output: 0.2.0 sections\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nGroupSurvey\n\nField | Type\nresults | object[] | One per group: group (name), codepoint (number), accepted (bool), silent (bool: no answer, so unknown), summary\naccepted | string[] | Every post-quantum group the server picked when offered alone\ncnsa | boolean | Accepts ML-KEM-1024 (MLKEM1024 or SecP384r1MLKEM1024)\ncnsaNote | string | The CNSA 2.0 note\nTrustReport\n\nField | Type\nverdict | string | trusted, expired, not-yet-valid, name-mismatch, untrusted-root, self-signed, unverifiable\nheadline, detail | string\nproblems | string[] | Every problem, most important first. Empty when trusted\nanchor | string | The root’s name, when the chain validated. Omitted otherwise\nroots | string | Which root store, e.g. \"Mozilla's root store (webpki-roots, 121 roots)\"\nSignatureReport\n\nField | Type\nslhdsa | string | serves, no-cert, ignores-offer, unknown\nslhdsaScheme | string | E.g. \"slhdsa_sha2_128s\". Omitted unless it signed\nslhdsaProbe | string | The probe’s summary\ncomposite | string | \"not offered: IANA has no composite signature codepoints yet\"\nmerkleTreeCertificates | string | Always \"not checked: experimental\"\nAuditReport"
+  },
+  {
+    "id": "pqdoctor-reference-json#020-sections~1",
+    "page": "JSON output",
+    "section": "0.2.0 sections",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#020-sections",
+    "text": "JSON output: 0.2.0 sections\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nField | Type\nversions | object[] | version (\"SSL 3.0\" … \"TLS 1.3\"), supported, cipher (the suite picked), summary\nsuitesUnder | string | The version the suites were tested under. Omitted when no TLS ≤ 1.2\nsuites | object[] | Accepted suites, strongest first: code, name, accepted, keyExchange (\"X25519\", \"P-256\", \"ffdhe-2048\", …)\ntested | number | How many suites were offered\nserverPreference, extendedMasterSecret, secureRenegotiation | boolean | Omitted when not known\nfindings | object[] | id, severity (high, medium, low), title, detail, knownIssue. See the table\nnote | string | That findings are by configuration only\nMiddleboxReport\n\nField | Type\nvariants | object[] | id, label, bytes, ok, reply (Reply), summary, ms\nfailed | string[] | The ids that got no ServerHello\nheadline | string\nQuicReport\n\nField | Type\nhost, port, ip |\nverdict | Verdict\nheadline | string\ncauseCode | string | quic-pq-preferred, quic-pq, quic-no-mlkem, quic-hello-rejected, quic-no-reply, quic-version, quic-skipped\ngroup | string | null\nprefersPq, retry | boolean\nversionNegotiation | string[] | Versions a Version Negotiation packet offered. Omitted when none\nprobes | object[] | label, reply (Reply), summary, ms\nnote | string | E.g. why it wasn’t checked. Omitted when empty\nelapsedMs | number\nDtlsReport\n\nField | Type\nverdict | Verdict\nheadline | string\nversion | string | The highest negotiated, \"DTLS 1.3\" or \"DTLS 1.2\". Omitted when none\ngroup | string | Omitted when unknown\nprobes | object[] | label, reply, summary, version, group, cookie (bool), ms\nnote | string\nDiff"
+  },
+  {
+    "id": "pqdoctor-reference-json#020-sections~2",
+    "page": "JSON output",
+    "section": "0.2.0 sections",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#020-sections",
+    "text": "JSON output: 0.2.0 sections\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nfixed, regressed, mixed (0.4.0: post-quantum before, mixed now; not a regression), changed, added, removed: lists of { target, kind, before, after }, where before / after are { verdict, cause, group, checkedAt } (omitted for added / removed). unchanged: a count."
+  },
+  {
+    "id": "pqdoctor-reference-json#040-sections~0",
+    "page": "JSON output",
+    "section": "0.4.0 sections",
+    "url": "https://pqdoctor.com/pqdoctor/reference/json/#040-sections",
+    "text": "JSON output: 0.4.0 sections\n(The full schema of pqdoctor's JSON - the one-host report, scan records, and the SSH report - with every field, type and value.)\nMailReport\n\npqdoctor mail <domain> --json.\n\nField | Type\ndomain | string\nresolver | string | The DNS server the MX lookup used\nimplicit | boolean | The domain had no MX records, so the domain itself was checked (“implicit MX”, RFC 5321 §5.1)\nmx | object[] | One per mail server, by preference then name: host, preference, and report (a Report) or error\nverdict | string | pq (every server that answered), mixed, notPq or unreachable\nsummary | string\nsubmission | Report[] | --submission: ports 465 and 587 on the first mail server. Omitted otherwise\ncheckedAt | number\nGradeReport\n\npqdoctor grade <domain> --json.\n\nField | Type\ndomain | string\ngrade | string | null | A+, A, B, C, D, F, or null when nothing was reachable\nsummary | string\nreasons | string[]\ncoverage | object | checked (string[]) and missing: [{ part, how }], each missing part with the command that would check it\nparts | object | web: a Report per endpoint; mail: the MailReport. mail omitted when not checked\ncheckedAt | number\nvantage | string | Where the check ran, when it wasn’t this computer. Omitted otherwise"
+  },
+  {
+    "id": "pqdoctor-reference-cli#_top~0",
+    "page": "CLI reference",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/",
+    "text": "CLI reference: Overview\n(Every pqdoctor command, option, output format and exit status.)\n0.4.0\nThis page describes pqdoctor 0.4.0, the current release. An option marked with a version (0.2.0, 0.4.0) isn’t in the releases before it.\n\nUsage\npqdoctor <host[:port]> [options] check one server ([v6addr]:port for IPv6)\n\npqdoctor scan <file|-> [options] check a list (one host per line, host:port,\n\nhttps:// URLs or Tranco 'rank,domain' CSV)\n\npqdoctor ssh <host[:port]> an SSH server's key exchange (port 22; also\n\nssh://[user@]host[:port])\n\npqdoctor quic <host[:port]> the key exchange over QUIC v1 (UDP, port 443)\n\npqdoctor dtls <host:port> DTLS 1.3 / 1.2 over UDP\n\npqdoctor mail <domain> the domain's mail servers (MX), each checked on\n\nport 25 (SMTP STARTTLS): post-quantum, mixed or not\n\npqdoctor grade <domain> one letter for the domain (A+ to F): <domain> and\n\nwww.<domain> on 443, the certificate, and mail\n\npqdoctor diff <old.jsonl> <new.jsonl> what got fixed, regressed or changed\n\npqdoctor fix --config PATH [--stack S] [--write]\n\nput the PQ group first in a server config\n\n(prints a diff; --write keeps a .bak)\n\npqdoctor sidecar <host> a PQ sidecar for a server whose library can't do\n\nML-KEM: cloudflared or Caddy 2.10+ config, steps, undo\n\npqdoctor inventory <source>... build the host list: ct:example.com, zone:FILE,\n\ncloudflare, kubernetes:FILE, terraform:FILE, aws:FILE,\n\nhosts:FILE (FILE '-' = stdin)\n\npqdoctor tickets <results.jsonl>... --owners FILE\n\none ticket per non-PQ host, for its team (dry run;\n\n--github OWNER/REPO --apply writes issues)\n\npqdoctor push <results.jsonl>... --to URL\n\nsend a run to a pqdoctor fleet dashboard"
+  },
+  {
+    "id": "pqdoctor-reference-cli#_top~1",
+    "page": "CLI reference",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/",
+    "text": "CLI reference: Overview\n(Every pqdoctor command, option, output format and exit status.)\npqdoctor agent <agent.toml> [--once] inventory → scan → diff → push → tickets, on a schedule\n\npqdoctor agent install <agent.toml> [--every 24h] [--dry-run]\n\nrun `agent --once` from the OS scheduler (Task\n\nScheduler, a systemd user timer, launchd)\n\npqdoctor agent uninstall | status <name>\n\nremove it, or show it (name: the config's name)\n\npqdoctor local on the server itself: which TLS library each\n\nserver program uses, and whether it has ML-KEM\n\npqdoctor plan <results.jsonl>... from scan results: the few fixes that make the\n\nmost traffic post-quantum, in order\n\npqdoctor completions bash|zsh|fish|powershell\n\npqdoctor man the manual page (roff)\n\npqdoctor --help | -h\n\npqdoctor --version | -V"
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-host~0",
+    "page": "CLI reference",
+    "section": "pqdoctor <host>",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-host",
+    "text": "CLI reference: pqdoctor <host>\n(Every pqdoctor command, option, output format and exit status.)\nChecks one server: the seven key-exchange probes, the group survey, the certificate check with trust, and every address the name resolves to.\n\npqdoctor github.com # report on screen\n\npqdoctor example.org:8443 --json # the full report as JSON\n\npqdoctor smtp.example.com:587 # STARTTLS first, picked by port\n\npqdoctor db.example.com:5432 # PostgreSQL's SSLRequest first\n\npqdoctor [2001:db8::1]:443 # an IPv6 address\n\npqdoctor 203.0.113.10 --no-http # an IP: no SNI, no Server header\n\npqdoctor example.org --audit --middlebox --quic"
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-host~1",
+    "page": "CLI reference",
+    "section": "pqdoctor <host>",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-host",
+    "text": "CLI reference: pqdoctor <host>\n(Every pqdoctor command, option, output format and exit status.)\nOption | Default\n--port N, -p N | 443 | Port for a host given without one\n--format F, -f F | text | text, json, csv, html, sarif or junit (formats). 0.2.0\n--json |\nThe same as --format json\n--no-http |\nDon’t fetch the HTTP Server header on port 80. Fixes are then generic\n--no-auth |\nSkip the certificate / ML-DSA check (and so trust)\n--no-trust |\nDon’t check the chain against Mozilla’s roots. 0.2.0\n--no-groups |\nSkip the post-quantum group survey (5 connections). 0.2.0\n--slh-dsa | off | One more certificate probe offering only SLH-DSA. 0.2.0\n--audit | off | TLS versions, TLS 1.2 suites, weak features, about 60 connections. 0.2.0\n--middlebox | off | Split, fragmented and resized hellos, 8 connections. 0.2.0\n--quic | off | Also the QUIC check on the same port. 0.2.0\n--dtls | off | Also DTLS on the same UDP port. 0.2.0\n--proxy URL |\nEvery TCP connection through a proxy. 0.2.0\n--starttls P | by port | smtp, imap, pop3, ftp, xmpp, ldap, postgres, mysql, rdp, auto or none (STARTTLS)\n--reprobe N | 1 | Not post-quantum? Check the same address up to N more times (key exchange only, 1 s apart, at most 5, stopping at the first post-quantum answer). A post-quantum answer among them makes the verdict mixed. 0 turns it off. 0.4.0\n--first-address |\nOnly the first address. By default up to 6 are checked and listed when they differ\n--user-agent S | pqdoctor/0.4.0 (post-quantum TLS check; handshake-only) | User-Agent for the header request\n--contact S |\nAdded to the User-Agent, e.g. an email or URL for opt-outs\n--cbom FILE |\nWrite a CycloneDX 1.6 CBOM. 0.2.0\n--history FILE |\nAppend a record t"
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-host~2",
+    "page": "CLI reference",
+    "section": "pqdoctor <host>",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-host",
+    "text": "CLI reference: pqdoctor <host>\n(Every pqdoctor command, option, output format and exit status.)\no FILE. 0.2.0\n--no-config |\nIgnore the config file. 0.2.0\nSTARTTLS by port: 25 and 587 SMTP, 143 IMAP, 110 POP3, and from 0.2.0 21 FTP, 5222 XMPP, 389 LDAP, 5432 PostgreSQL, 3306 MySQL, 3389 RDP.\n\nExit status: 0 post-quantum, 1 not post-quantum (including mixed), 2 unreachable or an error."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-scan~0",
+    "page": "CLI reference",
+    "section": "pqdoctor scan",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-scan",
+    "text": "CLI reference: pqdoctor scan\n(Every pqdoctor command, option, output format and exit status.)\nChecks a list. See Scanning a list for a walkthrough.\n\npqdoctor scan hosts.txt\n\npqdoctor scan hosts.txt --json --out results.jsonl --resume --contact you@example.org\n\npqdoctor scan hosts.txt --format sarif > pq.sarif\n\ncat hosts.txt | pqdoctor scan - --quiet\n\nInput: one target per line. Accepted forms: host, host:port, [v6addr]:port, an https:// URL (host and port taken from it), or a Tranco rank,domain CSV line (the last field is used). Lines that don’t parse are counted as invalid and skipped."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-scan~1",
+    "page": "CLI reference",
+    "section": "pqdoctor scan",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-scan",
+    "text": "CLI reference: pqdoctor scan\n(Every pqdoctor command, option, output format and exit status.)\nOption | Default\n--port N | 443 | Port for targets without one\n--format F | text | text (TSV) and json (JSON Lines) and csv stream a line per host; html, sarif and junit print one document at the end\n--out FILE |\nAlso append JSON records to FILE\n--resume |\nSkip targets already in --out (matched on host and port)\n--concurrency N, -c N | 4 | Hosts in flight at once, max 32\n--rate R | 2 | New hosts started per second across all workers, max 20\n--limit N |\nOnly the first N targets\n--exclude FILE |\nHosts and domains not to contact. A domain covers its subdomains\n--skip-ranges FILE |\nNetworks not to probe, as provider cidr lines. Recorded as skipped\n--www-fallback |\nTry www.<domain> when the domain has no address\n--resolve-only |\nResolve and filter only. Contacts no host\n--auth | off | Also run the certificate check (2 more connections a host)\n--groups | off | Also the group survey (5 more connections a host). 0.2.0\n--all-addresses | off | Every address of each host (up to 6), not just the first. 0.2.0. From 0.4.0 each record gets addresses: every address with its verdict, cause, group and TLS version, one (hostname, IP) pair each\n--reprobe N | 1 | As for one host. 0.4.0\n--audit, --middlebox, --quic, --dtls, --proxy | off | As for one host. 0.2.0\n--cbom FILE, --history FILE |\nAs for one host, for every host. 0.2.0\n--no-http, --user-agent, --contact, --starttls |\nAs for one host\n--quiet, -q |\nNo progress or summary on stderr\nEach host’s probes stay one at a time, whatever the concurrency. From 0.4.0, --skip-ranges checks every address of a name: a name with any address in a listed"
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-scan~2",
+    "page": "CLI reference",
+    "section": "pqdoctor scan",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-scan",
+    "text": "CLI reference: pqdoctor scan\n(Every pqdoctor command, option, output format and exit status.)\n network is skipped, and the headline says how many, e.g. “(1 of 2 addresses)”. Before, only the first IPv4 address was looked at.\n\nExit status: 0 when the scan completes, whatever the verdicts. 2 when an input file can’t be read, --out can’t be opened, or --skip-ranges has no ranges. To fail on results, read the output (examples), or use --format junit / sarif in CI."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-mail~0",
+    "page": "CLI reference",
+    "section": "pqdoctor mail",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-mail",
+    "text": "CLI reference: pqdoctor mail\n(Every pqdoctor command, option, output format and exit status.)\n0.4.0. Looks up a domain’s MX records and checks every mail server (at most 10, one at a time) on port 25 with the SMTP STARTTLS check. See A whole domain’s mail.\n\npqdoctor mail example.com\n\npqdoctor mail example.com --resolver 1.1.1.1 --json\n\npqdoctor mail example.com --submission # also 465 and 587 on the first MX\n\nOption\n--resolver IP | The DNS server for the MX lookup (IP or IP:port). Default: the system’s, from /etc/resolv.conf or ipconfig /all, else 1.1.1.1. The output says which\n--submission | Also 465 and 587 on the first mail server\n--all-addresses | Every address of each mail server, not just the first\nThe answer is for the domain: pq (every server that answered), mixed (naming which are and aren’t), notPq, or unreachable. Home and office networks often block outbound port 25; unreachable says so, and to run it from a server. After the first server can’t connect, the next gets one 2-second try; if that fails too, the rest are “not tried: port 25 looks blocked from here”.\n\nNo MX records means the domain itself is the mail server (“implicit MX”, RFC 5321 §5.1), and the output notes it. A null MX (RFC 7505) and a name that doesn’t exist are errors. Each server gets the light check: no certificate probe, group survey or fingerprint unless asked for.\n\nTakes --format like one host; --json prints a MailReport. Exit status as for one host: 0 post-quantum, 1 mixed or not post-quantum, 2 unreachable or an error."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-grade~0",
+    "page": "CLI reference",
+    "section": "pqdoctor grade",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-grade",
+    "text": "CLI reference: pqdoctor grade\n(Every pqdoctor command, option, output format and exit status.)\n0.4.0. One letter for a domain. It checks <domain>:443 and www.<domain>:443 with the one-host check (so the certificate probe too), and mail as pqdoctor mail does. When www.<domain> doesn’t resolve, it’s skipped and the output says so.\n\npqdoctor grade example.com\n\npqdoctor grade example.com --no-mail --json\n\nGrade | When\nA+ | A, plus mail post-quantum and the certificate side ready: it serves ML-DSA, or a whole ML-DSA-44 chain would still fit TCP’s first flight\nA | Post-quantum everywhere; mail post-quantum or not checked\nB | Post-quantum with a warning, or mail checked and not post-quantum\nC | Some endpoints or addresses post-quantum, some not (mixed, apex vs www)\nD | TLS 1.3, nothing post-quantum\nF | No TLS 1.3 anywhere\nNothing reachable is “no grade”, not F. --no-mail leaves mail out, so the grade is then at most A. The text output has the letter, the summary, the reasons, what was and wasn’t checked (with the command that would check it) and each endpoint. --resolver is used for the mail part; --json prints a GradeReport.\n\nExit status: 0 for A+ to B, 1 for C to F, 2 for no grade."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-ssh~0",
+    "page": "CLI reference",
+    "section": "pqdoctor ssh",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-ssh",
+    "text": "CLI reference: pqdoctor ssh\n(Every pqdoctor command, option, output format and exit status.)\nChecks an SSH server’s key exchange offer, and flags post-quantum host-key algorithms from drafts. See SSH.\n\npqdoctor ssh github.com\n\npqdoctor ssh git.example.com:2222 --json\n\npqdoctor ssh ssh://git@example.org:7999 # the user name is ignored\n\nTakes --format, --proxy, --history and --cbom. Exit status: 0 post-quantum, 1 draft-only or not post-quantum, 2 unreachable or an error."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-quic--dtls~0",
+    "page": "CLI reference",
+    "section": "pqdoctor quic / dtls",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-quic--dtls",
+    "text": "CLI reference: pqdoctor quic / dtls\n(Every pqdoctor command, option, output format and exit status.)\n0.2.0. The key exchange over UDP. See QUIC and DTLS.\n\npqdoctor quic cloudflare.com # port 443\n\npqdoctor dtls vpn.example.org:4433 --json\n\nNeither can go through --proxy (HTTP CONNECT and SOCKS5 CONNECT carry TCP only); with one set they exit 2 and say so. Exit status as for one host."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-diff~0",
+    "page": "CLI reference",
+    "section": "pqdoctor diff",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-diff",
+    "text": "CLI reference: pqdoctor diff\n(Every pqdoctor command, option, output format and exit status.)\n0.2.0. Compares two history files: the newest record per target in each.\n\npqdoctor diff last-week.jsonl today.jsonl\n\npqdoctor diff old.jsonl new.jsonl --json\n\nA target is fixed when it went from not post-quantum to post-quantum, regressed when it went the other way (and still answers), mixed (0.4.0) when it went from post-quantum to mixed, which isn’t a regression, changed when its verdict, cause or group changed otherwise, and added / removed when it’s in only one file. Exit status: 1 when something regressed, else 0 (a host that went mixed alone exits 0); 2 when a file can’t be read. See History, diff and CBOM."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-fix~0",
+    "page": "CLI reference",
+    "section": "pqdoctor fix",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-fix",
+    "text": "CLI reference: pqdoctor fix\n(Every pqdoctor command, option, output format and exit status.)\n0.2.0. Puts the post-quantum group (or key exchange) first in a server’s config. See Fixing a config.\n\npqdoctor fix --config /etc/nginx/nginx.conf # a unified diff; nothing changes\n\npqdoctor fix --config /etc/nginx/nginx.conf --write # writes it, keeps nginx.conf.bak\n\npqdoctor fix --config /etc/ssh/sshd_config --write --host git.example.org\n\nOption\n--config PATH | The file. Required\n--stack S | nginx, apache, haproxy, postfix, dovecot, sshd, caddy or iis, when pqdoctor can’t tell from the file\n--write | Write the change, keeping the original as PATH.bak (or .bak.1, …), and print the test, reload and re-check commands\n--host H | The server to put in the printed re-check command\nIt never reloads anything. Caddy and IIS have nothing to rewrite; for them it explains what to do instead."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-agent~0",
+    "page": "CLI reference",
+    "section": "pqdoctor agent",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-agent",
+    "text": "CLI reference: pqdoctor agent\n(Every pqdoctor command, option, output format and exit status.)\nRuns inventory → scan → diff → push → tickets from an agent.toml, on a schedule. See Across a company for the config.\n\npqdoctor agent agent.toml --once # one cycle, then exit\n\npqdoctor agent install agent.toml --every 6h --dry-run # 0.4.0\n\npqdoctor agent status dc-east # 0.4.0\n\npqdoctor agent uninstall dc-east # 0.4.0\n\nOption\n--once | One cycle, then exit. Without it, the agent repeats every interval_minutes\n--every N | install: how often, e.g. 30m, 6h, 1d. Default: the config’s interval_minutes; at least 5m. 0.4.0\n--dry-run | install, uninstall, status: print the files and commands only. 0.4.0\n0.4.0. install runs agent --once from the OS scheduler: Windows Task Scheduler, a systemd user timer, or launchd. uninstall <name> removes it and status <name> shows it; the name is the config’s name. The agent re-checks a non-PQ answer once and doesn’t report mixed as a regression."
+  },
+  {
+    "id": "pqdoctor-reference-cli#pqdoctor-completions--man~0",
+    "page": "CLI reference",
+    "section": "pqdoctor completions / man",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#pqdoctor-completions--man",
+    "text": "CLI reference: pqdoctor completions / man\n(Every pqdoctor command, option, output format and exit status.)\n0.2.0.\n\npqdoctor completions bash > /etc/bash_completion.d/pqdoctor\n\npqdoctor completions zsh > \"${fpath[1]}/_pqdoctor\"\n\npqdoctor completions fish > ~/.config/fish/completions/pqdoctor.fish\n\npqdoctor completions powershell >> $PROFILE\n\npqdoctor man > /usr/local/share/man/man1/pqdoctor.1"
+  },
+  {
+    "id": "pqdoctor-reference-cli#config-file~0",
+    "page": "CLI reference",
+    "section": "Config file",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#config-file",
+    "text": "CLI reference: Config file\n(Every pqdoctor command, option, output format and exit status.)\n0.2.0. Long options as key = value lines, read before the command line, so the command line wins. true turns a flag on, false leaves it out.\n\n~/.config/pqdoctor/config\n# %APPDATA%\\pqdoctor\\config on Windows; $XDG_CONFIG_HOME/pqdoctor/config if set\n\ncontact = security@example.org\n\nproxy = socks5h://127.0.0.1:1080\n\nno-http = true\n\nrate = 1\n\nPQDOCTOR_CONFIG names another file; --no-config skips it. A line that isn’t key = value exits 64, naming the line."
+  },
+  {
+    "id": "pqdoctor-reference-cli#output-formats~0",
+    "page": "CLI reference",
+    "section": "Output formats",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#output-formats",
+    "text": "CLI reference: Output formats\n(Every pqdoctor command, option, output format and exit status.)\nFormat | One host | Scan\ntext | The report as a terminal reads it | TSV, a line per host\njson | The report, pretty-printed | A record per line\ncsv | Header + one row | Header + a row per host. Cells starting with = + - @ get a leading ' so spreadsheets don’t run them\nhtml | The full report, one file | A summary and a row per host\nsarif | SARIF 2.1.0: a result per host, a rule per cause code. mixed is a warning | The same. Locations point at the host list\njunit | JUnit XML: post-quantum passes, not post-quantum (and mixed) fails, unreachable is an error | The same, skipped hosts skipped\nHTML is self-contained: inline CSS, no scripts, no external requests, a Content-Security-Policy that allows nothing else."
+  },
+  {
+    "id": "pqdoctor-reference-cli#output-streams~0",
+    "page": "CLI reference",
+    "section": "Output streams",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#output-streams",
+    "text": "CLI reference: Output streams\n(Every pqdoctor command, option, output format and exit status.)\nStream | Gets\nstdout | The report or the scan output\nstderr | Errors, and a scan’s start line, progress and summary\nColour is used only when stdout is a terminal and NO_COLOR isn’t set, so piping and redirecting give plain text.\n\nScan TSV\n\nhost port verdict cause group stack headline\n\ngithub.com 443 notPq no-mlkem - - Not post-quantum\n\n- stands for an empty group or stack. Tabs in a headline become spaces. The header is left out when appending to an existing --out with --resume.\n\nScan summary (stderr)\n\npqdoctor: 3 targets (0 invalid lines, 0 excluded, 0 already done) · 3 at a time · ≤2 new/s\n\npqdoctor: 3 targets, 0 skipped, 3 answered TLS, 1 post-quantum (33.3% of answered)\n\nno-mlkem 1\n\npq-preferred 1\n\ntls12-only 1\n\n“Answered TLS” leaves out unreachable, error, skipped and resolved records. Causes are sorted by count."
+  },
+  {
+    "id": "pqdoctor-reference-cli#exit-status~0",
+    "page": "CLI reference",
+    "section": "Exit status",
+    "url": "https://pqdoctor.com/pqdoctor/reference/cli/#exit-status",
+    "text": "CLI reference: Exit status\n(Every pqdoctor command, option, output format and exit status.)\nCode | One host, ssh, quic, dtls, mail | grade | scan | diff\n0 | Post-quantum | A+ to B | Completed | Nothing regressed\n1 | Not post-quantum, mixed, TLS 1.2 only, broken, or draft-only | C to F | — | Something regressed\n2 | Unreachable, or an error | No grade | Couldn’t read input or write output | Couldn’t read a file\n64 | Bad arguments or config file | Bad arguments | Bad arguments | Bad arguments\nOn bad arguments pqdoctor prints the problem and Run 'pqdoctor --help' for usage. to stderr."
+  },
+  {
+    "id": "pqdoctor-guides-verify#_top~0",
+    "page": "Verify by hand",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/guides/verify/",
+    "text": "Verify by hand: Overview\n(Confirm any pqdoctor verdict yourself with OpenSSL 3.5 or OpenSSH, independent of pqdoctor's own probes.)\nEvery pqdoctor report ends with a command that checks the same thing with standard tools. Use it to confirm a verdict, or after applying a fix."
+  },
+  {
+    "id": "pqdoctor-guides-verify#key-exchange-with-openssl-35~0",
+    "page": "Verify by hand",
+    "section": "Key exchange, with OpenSSL 3.5+",
+    "url": "https://pqdoctor.com/pqdoctor/guides/verify/#key-exchange-with-openssl-35",
+    "text": "Verify by hand: Key exchange, with OpenSSL 3.5+\n(Confirm any pqdoctor verdict yourself with OpenSSL 3.5 or OpenSSH, independent of pqdoctor's own probes.)\nOffer only X25519MLKEM768. A post-quantum server completes the handshake with it. Any other server fails.\n\nopenssl s_client -connect example.com:443 -servername example.com -groups X25519MLKEM768 </dev/null 2>&1 | grep -i 'group'\n\nPost-quantum: the output names the negotiated group, X25519MLKEM768.\n\nNot post-quantum: the handshake fails, typically with a handshake failure alert.\n\nThis needs OpenSSL 3.5 or newer (openssl version), the first release with ML-KEM. Older OpenSSL doesn’t know the group and refuses to run.\n\nFor mail, add -starttls smtp, imap or pop3. For an IP address, leave out -servername. pqdoctor’s report already prints the right variant.\n\nTLS 1.2 only\n\nopenssl s_client -connect example.com:443 -tls1_3 </dev/null\n\nA TLS 1.2-only server answers with a protocol_version alert."
+  },
+  {
+    "id": "pqdoctor-guides-verify#is-this-how-pqdoctor-was-checked~0",
+    "page": "Verify by hand",
+    "section": "Is this how pqdoctor was checked?",
+    "url": "https://pqdoctor.com/pqdoctor/guides/verify/#is-this-how-pqdoctor-was-checked",
+    "text": "Verify by hand: Is this how pqdoctor was checked?\n(Confirm any pqdoctor verdict yourself with OpenSSL 3.5 or OpenSSH, independent of pqdoctor's own probes.)\nYes. The accuracy checks used exactly this test, through Node 24’s OpenSSL 3.5.5: a completed PQ-only handshake proves support. pqdoctor agreed 59 / 59 on real sites where OpenSSL gave a definite answer.\n\nOne caution from that work: OpenSSL counts any later alert as a failure. receptivity.io picked X25519MLKEM768 in its ServerHello, then failed later on an SNI problem, so the plain OpenSSL test said “no” while the key exchange was in fact post-quantum. If OpenSSL fails, look at where."
+  },
+  {
+    "id": "pqdoctor-guides-verify#ml-dsa-with-openssl-35~0",
+    "page": "Verify by hand",
+    "section": "ML-DSA, with OpenSSL 3.5+",
+    "url": "https://pqdoctor.com/pqdoctor/guides/verify/#ml-dsa-with-openssl-35",
+    "text": "Verify by hand: ML-DSA, with OpenSSL 3.5+\n(Confirm any pqdoctor verdict yourself with OpenSSL 3.5 or OpenSSH, independent of pqdoctor's own probes.)\nopenssl s_client -connect origin.example.com:443 -sigalgs mldsa44 -brief </dev/null\n\nA server with an ML-DSA-44 certificate completes and prints Signature type: mldsa44. One without it fails."
+  },
+  {
+    "id": "pqdoctor-guides-verify#ssh-with-openssh~0",
+    "page": "Verify by hand",
+    "section": "SSH, with OpenSSH",
+    "url": "https://pqdoctor.com/pqdoctor/guides/verify/#ssh-with-openssh",
+    "text": "Verify by hand: SSH, with OpenSSH\n(Confirm any pqdoctor verdict yourself with OpenSSL 3.5 or OpenSSH, independent of pqdoctor's own probes.)\nssh -vv -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null github.com 2>&1 | grep -E 'kex: algorithm|KEX algorithms'\n\nWith no known host keys, ssh stops right after the key exchange, before offering any key, so it can’t log in. Look for kex: algorithm: mlkem768x25519-sha256. This needs an OpenSSH client with that method: 9.9 or newer."
+  },
+  {
+    "id": "pqdoctor-guides-trust#_top~0",
+    "page": "Certificate trust",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/guides/trust/",
+    "text": "Certificate trust: Overview\n(pqdoctor checks the certificate chain against Mozilla's roots — trusted, expired, name-mismatch, untrusted-root or self-signed.)\n0.2.0\nNew in pqdoctor 0.2.0. On by default for one host. It uses the chain from the certificate check, so --no-auth turns it off too; --no-trust skips only this.\n\nThe chain the certificate check reads is validated the way a browser would:\n\na path from the leaf, through the intermediates the server sent, to a root in Mozilla’s root store (the webpki-roots crate);\n\nevery certificate within its validity period, right now;\n\nthe leaf valid for the host name you checked, and for server authentication.\n\nTrust Trusted certificate (trusted)\n\nChains to GTS Root R4 and is valid for cloudflare.com until 2026-12-04T23:29:33Z."
+  },
+  {
+    "id": "pqdoctor-guides-trust#verdicts~0",
+    "page": "Certificate trust",
+    "section": "Verdicts",
+    "url": "https://pqdoctor.com/pqdoctor/guides/trust/#verdicts",
+    "text": "Certificate trust: Verdicts\n(pqdoctor checks the certificate chain against Mozilla's roots — trusted, expired, name-mismatch, untrusted-root or self-signed.)\ntrust.verdict | Meaning\ntrusted | Valid for this name, chains to a Mozilla root\nexpired | A certificate in the chain is past its notAfter\nnot-yet-valid | A certificate isn’t valid yet (or this machine’s clock is wrong)\nname-mismatch | The leaf doesn’t cover the host name\nuntrusted-root | The chain doesn’t reach a Mozilla root: a private CA, or a missing intermediate\nself-signed | The leaf signs itself\nunverifiable | The chain uses a signature pqdoctor can’t verify, e.g. ML-DSA or SLH-DSA (no public root uses them yet)\nWhen several apply, verdict is the most important one (issuer first, then time, then name) and problems lists them all.\n\nChecked against badssl.com on 2026-10-15: expired., wrong.host., self-signed. and untrusted-root.badssl.com each got their verdict, and sha256.badssl.com was trusted (an RSA chain to ISRG Root X1)."
+  },
+  {
+    "id": "pqdoctor-guides-trust#how~0",
+    "page": "Certificate trust",
+    "section": "How",
+    "url": "https://pqdoctor.com/pqdoctor/guides/trust/#how",
+    "text": "Certificate trust: How\n(pqdoctor checks the certificate chain against Mozilla's roots — trusted, expired, name-mismatch, untrusted-root or self-signed.)\nTLS 1.3 servers: the chain comes from the certificate check, which decrypts the server’s first flight. No extra connection.\n\nTLS 1.2-only servers: the Certificate message is plaintext, so one TLS 1.2 hello reads it, up to ServerHelloDone, and hangs up.\n\nSignatures are checked with rustls-webpki and pure-Rust code (the RustCrypto p256, p384 and rsa crates and ed25519-dalek): ECDSA P-256 / P-384, RSA PKCS#1 v1.5 and PSS (2048–8192 bits), and Ed25519. No C crypto library is linked.\n\nThere is no revocation check. No OCSP or CRL request is made, so the check stays handshake-only.\n\nThe result is the report’s trust field. The pqdoctor crate’s trust feature (on by default) builds it; the checker on Cloudflare’s network (pqdoctor web) is built without it."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#_top~0",
+    "page": "ML-DSA readiness",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/",
+    "text": "ML-DSA readiness: Overview\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\nPost-quantum key exchange protects today’s traffic from being recorded now and decrypted later. Authentication is the second half: the server’s certificate and its signature on the handshake. The post-quantum signature standard is ML-DSA.\n\nCloudflare accepts ML-DSA certificates on the hop from Cloudflare to the origin (blog, 2026-07-29). Browsers don’t take ML-DSA certificates from public CAs yet."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#what-pqdoctor-checks~0",
+    "page": "ML-DSA readiness",
+    "section": "What pqdoctor checks",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/#what-pqdoctor-checks",
+    "text": "ML-DSA readiness: What pqdoctor checks\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\nTLS 1.3 encrypts the Certificate message, so pqdoctor has to do one real exchange to read it. It completes an X25519 exchange and runs the TLS 1.3 key schedule (AES-128-GCM) just far enough to decrypt the Certificate and CertificateVerify, then hangs up. It never sends Finished.\n\nIt makes two such connections:\n\nClassical schemes, then ML-DSA. This is the chain today’s clients get, and it shows whether listing ML-DSA codepoints breaks anything.\n\nOnly ML-DSA schemes. Does the server sign with ML-DSA when that’s all the client accepts?\n\nThe codepoints are mldsa44 0x0904, mldsa65 0x0905 and mldsa87 0x0906, per draft-ietf-tls-mldsa-06 and the IANA registry."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#results~0",
+    "page": "ML-DSA readiness",
+    "section": "Results",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/#results",
+    "text": "ML-DSA readiness: Results\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\nml-dsa | Headline | Means\nserves | Serves an ML-DSA certificate | Offered only ML-DSA, it signs with ML-DSA\nno-cert | No ML-DSA certificate | Offered only ML-DSA, it refuses cleanly\nignores-offer | No ML-DSA certificate (and the offer is ignored) | Offered only ML-DSA, it still signs with a classical key, so an ML-DSA-only client would fail\nrejects-codepoints | Breaks on ML-DSA signature algorithms | Listing ML-DSA next to classical schemes breaks the handshake. TLS requires unknown schemes to be ignored\nunknown | ML-DSA readiness unknown | Neither probe got far enough\nWhat no-cert doesn’t say\nRefusing cleanly is what any correct TLS stack does when it has no ML-DSA certificate. So no-cert doesn’t show whether the stack could serve ML-DSA. Early versions said “Ready for ML-DSA” here. That overclaimed, and it was changed."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#the-fix-dual-certificates~0",
+    "page": "ML-DSA readiness",
+    "section": "The fix: dual certificates",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/#the-fix-dual-certificates",
+    "text": "ML-DSA readiness: The fix: dual certificates\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\nServing ML-DSA needs a TLS library that has it (OpenSSL 3.5+) and an ML-DSA certificate. Configure it as a second certificate and key next to the current one. The server picks per client, so today’s clients keep the classical certificate.\n\nopenssl genpkey -algorithm ML-DSA-44 -out mldsa.key\n\n# issue mldsa.crt from your CA, then in nginx add a second pair:\n\nssl_certificate mldsa.crt;\n\nssl_certificate_key mldsa.key;\n\nPublic CAs don’t issue ML-DSA certificates yet, so issue it from your own CA or an origin CA. Flarebox makes one on your machine."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#shown-in-the-fix-lab~0",
+    "page": "ML-DSA readiness",
+    "section": "Shown in the fix lab",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/#shown-in-the-fix-lab",
+    "text": "ML-DSA readiness: Shown in the fix lab\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\nAn OpenSSL 3.5 server with one ECDSA P-256 certificate was reported “No ML-DSA certificate”. Given an ML-DSA-44 certificate next to the ECDSA one, it served ML-DSA to ML-DSA clients, and a classical-only client still got ecdsa_secp256r1_sha256. The chain grew from 364 to 3,919 bytes."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#real-output~0",
+    "page": "ML-DSA readiness",
+    "section": "Real output",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/#real-output",
+    "text": "ML-DSA readiness: Real output\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\npqdoctor github.com (authentication)\nAuthentication No ML-DSA certificate\n\nLeaf: ec-p256 key, signed ecdsa-sha256. Listing ML-DSA schemes doesn't break it, and offered only ML-DSA it refuses cleanly — what any correct TLS stack does, so this doesn't show whether its stack could serve ML-DSA. The chain is 2737 bytes.\n\nml-dsa: no-cert\n\nleaf github.com ec-p256 signed ecdsa-sha256 1009 B\n\n↑ Sectigo Public Server Authenticat… ec-p256 signed ecdsa-sha384 867 B\n\n↑ Sectigo Public Server Authenticat… ec-p384 signed ecdsa-sha384 842 B\n\nOn by default for one host. In a scan, --auth turns it on (two more connections a host). --no-auth skips it."
+  },
+  {
+    "id": "pqdoctor-guides-ml-dsa#slh-dsa-composite-signatures-merkle~0",
+    "page": "ML-DSA readiness",
+    "section": "SLH-DSA, composite signatures, Merkle Tree Certificates",
+    "url": "https://pqdoctor.com/pqdoctor/guides/ml-dsa/#slh-dsa-composite-signatures-merkle-tree-certificates",
+    "text": "ML-DSA readiness: SLH-DSA, composite signatures, Merkle Tree Certificates\n(Does the server serve a post-quantum (ML-DSA) certificate? What pqdoctor checks, and what it can and can't tell.)\n0.2.0\nNew in pqdoctor 0.2.0.\n\nSLH-DSA (FIPS 205): --slh-dsa adds a probe offering only the 12 SLH-DSA schemes IANA registered (0x0911–0x091C, draft-reddy-tls-slhdsa). signatures.slhdsa is serves, no-cert, ignores-offer or unknown. Certificate keys and signatures are named by NIST CSOR OID, e.g. slh-dsa-sha2-128s (2.16.840.1.101.3.4.3.20), and the pre-hash hash-slh-dsa-* OIDs too.\n\nComposite ML-DSA + classical signatures: IANA had registered no TLS codepoints for them on 2026-10-15, so pqdoctor offers none rather than guess. signatures.composite says so.\n\nMerkle Tree Certificates are experimental; pqdoctor reports them as not checked: experimental.\n\nThe chain itself is checked against Mozilla’s roots by Certificate trust. An ML-DSA or SLH-DSA chain comes back unverifiable there: no public root uses them yet."
+  },
+  {
+    "id": "get-started-post-quantum-tls#_top~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/",
+    "text": "Post-quantum TLS in 5 minutes: Overview\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nThis page is the background you need for the rest of the docs. If you already know what X25519MLKEM768 is and why a ClientHello gets split, skip to How pqdoctor works."
+  },
+  {
+    "id": "get-started-post-quantum-tls#two-separate-problems~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Two separate problems",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#two-separate-problems",
+    "text": "Post-quantum TLS in 5 minutes: Two separate problems\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nA TLS connection does two cryptographic jobs, and post-quantum migration touches both.\n\n|\nKey exchange | Authentication\nWhat it does | Agrees a secret key for this connection | Proves the server is who it says it is\nClassical today | X25519 or ECDHE with P-256 | RSA or ECDSA certificates and signatures\nPost-quantum | ML-KEM (FIPS 203), usually as a hybrid with X25519 | ML-DSA (FIPS 204) certificates and signatures\nThe quantum risk | Harvest now, decrypt later: traffic recorded today can be decrypted once a large quantum computer exists | A forged signature only matters at the time of the connection, so this one can wait longer\nUrgency | Now | Later; browsers don’t accept ML-DSA from public CAs yet\nThat’s why pqdoctor’s main verdict is about key exchange, and the ML-DSA check is a separate section of the report."
+  },
+  {
+    "id": "get-started-post-quantum-tls#hybrid-key-exchange-x25519mlk~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Hybrid key exchange: X25519MLKEM768",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#hybrid-key-exchange-x25519mlkem768",
+    "text": "Post-quantum TLS in 5 minutes: Hybrid key exchange: X25519MLKEM768\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nThe post-quantum key exchange deployed on the web today is a hybrid: the client and server do an X25519 exchange and an ML-KEM-768 exchange together, and combine both secrets. If either one holds, the connection is safe. So a hybrid is never weaker than today’s X25519.\n\nIn TLS 1.3 it’s a named group, like X25519 or P-256:\n\nGroup | Codepoint | Status\nX25519MLKEM768 | 0x11EC | The standard hybrid. What browsers and Cloudflare use\nX25519Kyber768Draft00 | 0x6399 | The pre-standard draft. Browsers have dropped it\nX25519 | 0x001D | Classical\nsecp256r1 (P-256) | 0x0017 | Classical (NIST)\nA server is post-quantum, for pqdoctor’s purposes, when it negotiates X25519MLKEM768."
+  },
+  {
+    "id": "get-started-post-quantum-tls#how-a-server-picks-a-group~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "How a server picks a group",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#how-a-server-picks-a-group",
+    "text": "Post-quantum TLS in 5 minutes: How a server picks a group\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nIn TLS 1.3 the client sends a list of groups it supports and one or more key shares: public keys for some of those groups, so the server can answer in one round trip.\n\nIf the server supports a group the client sent a share for, it answers with a ServerHello for that group.\n\nIf it prefers a group the client listed but didn’t send a share for, it answers with a HelloRetryRequest asking the client to try again with that group.\n\nThat second rule is how pqdoctor tells “supports ML-KEM” apart from “prefers ML-KEM”. It sends an X25519 share with ML-KEM listed first. A server that asks for a retry with ML-KEM prefers it (pq-preferred). One that just picks X25519 doesn’t (pq). Browsers send both shares, so the difference rarely matters for them, but it does for clients that only send X25519."
+  },
+  {
+    "id": "get-started-post-quantum-tls#why-post-quantum-hellos-are-b~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Why post-quantum hellos are big",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#why-post-quantum-hellos-are-big",
+    "text": "Post-quantum TLS in 5 minutes: Why post-quantum hellos are big\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nAn ML-KEM-768 public key is 1,184 bytes, so the X25519MLKEM768 key share is 1,216 bytes. A ClientHello carrying it is well over a thousand bytes, often more than fits in one TCP segment, so it’s split across two segments.\n\nMost servers don’t care. But some load balancers, firewalls and TLS-inspecting appliances only look at the first segment, or can’t reassemble a ClientHello that spans two. They drop the connection or reset it. That’s protocol ossification, and it’s why pqdoctor sends a split PQ hello and a classical hello padded to the same size and split the same way. If both die, the size and split are the problem (large-hello-dropped). If only the PQ one dies, the codepoint is (pq-group-rejected)."
+  },
+  {
+    "id": "get-started-post-quantum-tls#where-cloudflare-fits~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Where Cloudflare fits",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#where-cloudflare-fits",
+    "text": "Post-quantum TLS in 5 minutes: Where Cloudflare fits\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nA request through Cloudflare has two TLS hops:\n\nbrowser ──TLS──▶ Cloudflare edge ──TLS──▶ your origin server\n\n(1) (2)\n\nBrowser to edge is Cloudflare’s side, and it’s already post-quantum for most browser traffic.\n\nEdge to origin depends on your server. Cloudflare’s “Automatic key exchange” uses post-quantum to the origin when the origin supports it, so whether hop 2 is post-quantum comes down to your origin’s TLS stack and config. That’s what pqdoctor diagnoses, and what Flarebox checks for every origin behind your zones.\n\nIf you can’t upgrade the origin, Cloudflare Tunnel replaces hop 2 with a tunnel that already uses post-quantum key agreement."
+  },
+  {
+    "id": "get-started-post-quantum-tls#authentication-ml-dsa~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Authentication: ML-DSA",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#authentication-ml-dsa",
+    "text": "Post-quantum TLS in 5 minutes: Authentication: ML-DSA\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nFor hop 2, Cloudflare accepts ML-DSA certificates from your origin (Cloudflare blog, 2026-07-29), once the zone’s Custom Origin Trust Store holds the CA. ML-DSA-44 is the recommended size. Its public keys and signatures are much bigger than ECDSA’s: in the fix lab, adding an ML-DSA-44 certificate grew the chain from 364 to 3,919 bytes. The usual setup is dual certificates: the server keeps its ECDSA certificate for today’s clients and serves ML-DSA to clients that ask for it.\n\nSee ML-DSA readiness and ML-DSA origin certificates."
+  },
+  {
+    "id": "get-started-post-quantum-tls#ssh~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "SSH",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#ssh",
+    "text": "Post-quantum TLS in 5 minutes: SSH\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nSSH has its own post-quantum key exchange methods: mlkem768x25519-sha256 (OpenSSH 9.9+, the default from 10.0) and sntrup761x25519-sha512 (OpenSSH’s default from 9.0). See SSH."
+  },
+  {
+    "id": "get-started-post-quantum-tls#deadlines~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Deadlines",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#deadlines",
+    "text": "Post-quantum TLS in 5 minutes: Deadlines\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nGovernments have set dates for the migration: NIST, the NSA’s CNSA 2.0, the EU, the UK NCSC and Australia’s ASD. Flarebox lists 12 dated milestones, each with its source, against your zone’s results. See Deadlines."
+  },
+  {
+    "id": "get-started-post-quantum-tls#further-reading~0",
+    "page": "Post-quantum TLS in 5 minutes",
+    "section": "Further reading",
+    "url": "https://pqdoctor.com/get-started/post-quantum-tls/#further-reading",
+    "text": "Post-quantum TLS in 5 minutes: Further reading\n(The background for everything else here - key exchange vs authentication, hybrid ML-KEM, ML-DSA, and why post-quantum hellos break old middleboxes.)\nFIPS 203: ML-KEM\n\nFIPS 204: ML-DSA\n\ndraft-ietf-tls-ecdhe-mlkem: the hybrid groups in TLS 1.3\n\ndraft-ietf-tls-mldsa: ML-DSA in TLS 1.3\n\nCloudflare: Is your domain using post-quantum encryption?"
+  },
+  {
+    "id": "resources-faq#post-quantum-basics~0",
+    "page": "FAQ",
+    "section": "Post-quantum basics",
+    "url": "https://pqdoctor.com/resources/faq/#post-quantum-basics",
+    "text": "FAQ: Post-quantum basics\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nWhat does “post-quantum” mean here?\n\nThat a server negotiates a key exchange a quantum computer can’t break. In TLS today that’s a hybrid group: X25519MLKEM768 combines the classical X25519 with ML-KEM-768 (NIST FIPS 203). pqdoctor reports a server as post-quantum when it negotiates a hybrid or pure ML-KEM group.\n\nQuantum computers that break TLS don’t exist yet. Why act now?\n\nBecause traffic recorded today can be decrypted later (“harvest now, decrypt later”). Anything with a long confidentiality life (health, finance, credentials, private messages) is exposed by every classical handshake made from now on. Key exchange is the part that protects it, and it’s also the part that’s ready to switch today.\n\nWhy hybrid and not ML-KEM alone?\n\nHybrid is at least as strong as X25519 even if a weakness were found in ML-KEM, and it’s what browsers and Cloudflare deploy. Pure ML-KEM groups exist (MLKEM768, MLKEM1024); pqdoctor’s group survey reports whether a server accepts them.\n\nMy site is behind Cloudflare. Isn’t it post-quantum already?\n\nThe visitor’s connection to Cloudflare is. The connection from Cloudflare to your origin is a separate TLS connection, and it’s post-quantum only if your origin’s TLS library has ML-KEM and its configuration allows it. That hop is what pqdoctor and Flarebox’s Post-quantum tab check. The same applies to any CDN or load balancer in front of a server.\n\nChrome’s security panel says the connection uses ML-KEM. Why does pqdoctor say no?"
+  },
+  {
+    "id": "resources-faq#post-quantum-basics~1",
+    "page": "FAQ",
+    "section": "Post-quantum basics",
+    "url": "https://pqdoctor.com/resources/faq/#post-quantum-basics",
+    "text": "FAQ: Post-quantum basics\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nChrome is describing its connection to whatever it reached first, usually a CDN edge. pqdoctor checks the server you named: if that’s your origin (by its own address or name), the answer can differ. Check the edge and the origin separately to see both hops.\n\nDoes post-quantum TLS slow things down?\n\nSlightly more bytes, not noticeably more time: an X25519MLKEM768 key share is 1,216 bytes instead of 32, so the ClientHello grows by about a kilobyte and the server’s reply by about the same. ML-KEM itself is fast. Certificates are different: ML-DSA signatures are large, see the certificate questions."
+  },
+  {
+    "id": "resources-faq#results-and-accuracy~0",
+    "page": "FAQ",
+    "section": "Results and accuracy",
+    "url": "https://pqdoctor.com/resources/faq/#results-and-accuracy",
+    "text": "FAQ: Results and accuracy\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nWhat do the verdicts mean?\n\nPost-quantum: it negotiated an ML-KEM group. Not post-quantum: TLS works, but the key exchange is classical. Unreachable: no TLS answer at all (down, firewalled, or only reachable from inside). Each result also has one cause code, such as no-mlkem or tls12-only, that says why.\n\nA host gives different answers from run to run, or from two machines. Why?\n\nUsually several servers behind one name: a load balancer, DNS round-robin, or a different server per region. pqdoctor checks every address of a host (up to six) and lists them when they disagree. From two machines you may also reach different servers (GeoDNS, anycast) or be blocked differently. Pin one with host:port on an IP to compare like with like.\n\nHow sure is the “why, one level down” answer?\n\nEach answer has a confidence (high, medium or low) and the evidence behind it, so you can disagree on the facts. It comes from which classical groups the server accepts, the Server header, version banners and provider address ranges. When a hand-set group list hides the library version the answer is unknown; running pqdoctor <host> --local on the server reads the real versions, and local evidence always wins.\n\nCan I check internal servers, mail servers or SSH?\n\nYes. Run pqdoctor from inside the network for internal names. Mail servers are checked over STARTTLS (mail.example.com:587, or :25), and so are IMAP, POP3, FTP, XMPP, LDAP, PostgreSQL, MySQL and RDP by port. pqdoctor ssh host checks an SSH server’s key exchange, pqdoctor quic host checks HTTP/3.\n\nDoes it work through a corporate proxy?"
+  },
+  {
+    "id": "resources-faq#results-and-accuracy~1",
+    "page": "FAQ",
+    "section": "Results and accuracy",
+    "url": "https://pqdoctor.com/resources/faq/#results-and-accuracy",
+    "text": "FAQ: Results and accuracy\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nYes, for TCP: --proxy http://…, socks5://… or socks5h://… carries every connection. QUIC and DTLS are UDP and can’t use it."
+  },
+  {
+    "id": "resources-faq#scanning-safely~0",
+    "page": "FAQ",
+    "section": "Scanning safely",
+    "url": "https://pqdoctor.com/resources/faq/#scanning-safely",
+    "text": "FAQ: Scanning safely\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nHow many hosts can one scan check?\n\nThere’s no fixed limit: pqdoctor scan takes a list of any length, from a file or standard input, and checks 4 hosts at once by default (--concurrency goes up to 32). Each host is checked on its own and written as soon as it’s done, so a longer list only takes longer; what’s capped is how fast the scan goes, to stay gentle on the servers. The study’s 5,139 hosts took about 80 minutes at the defaults. For long lists, write results with --out and add --resume, so an interrupted scan picks up where it stopped. See How many hosts.\n\nHow fast does a scan go, and can I make it gentler?\n\nBy default 4 hosts at a time and at most 2 new hosts a second. --concurrency and --rate change that; --exclude keeps hosts or whole domains out, and --skip-ranges skips addresses in networks you name (for example a CDN’s).\n\nCould a scan set off our intrusion detection?\n\nIt sends ordinary TLS ClientHellos and reads one reply each, the same as any client connecting. A whole scan looks like a burst of short connections from one address, which some systems notice. Tell your security operations team first and set contact = … in the config file so the User-Agent of the one HTTP request names you.\n\nDoes pqdoctor store anything?\n\nOnly what you ask for: --out writes scan results, --history appends checks for pqdoctor diff, --cbom writes a bill of materials. Nothing is sent anywhere unless you run push (to your own fleet) or tickets --apply (to GitHub)."
+  },
+  {
+    "id": "resources-faq#fixing~0",
+    "page": "FAQ",
+    "section": "Fixing",
+    "url": "https://pqdoctor.com/resources/faq/#fixing",
+    "text": "FAQ: Fixing\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nWhich TLS libraries can do it?\n\nOpenSSL 3.5 or newer, current BoringSSL and AWS-LC, Go 1.24+, rustls 0.23.27+ with aws-lc-rs, and Node 22.20+ or 24.5+. A server is only as new as the library it’s built against: nginx built on OpenSSL 3.0 can’t, whatever openssl version says on the same machine.\n\nWhich servers can pqdoctor fix edit?\n\nnginx, Apache, HAProxy, Postfix, Dovecot and OpenSSH get a diff (and --apply applies it with a config test, a reload, a re-check from outside, and rollback on any failure). Caddy and IIS get an explanation instead, because their configuration works differently.\n\nWe can’t upgrade the library this quarter. Now what?\n\nPut a post-quantum sidecar in front: pqdoctor sidecar host writes the configuration for a Cloudflare Tunnel (cloudflared, when the name is in a Cloudflare zone you manage) or for Caddy 2.10+ terminating TLS on the same machine. The library upgrade can follow on its own schedule.\n\nThe fix is applied but the check still says no.\n\nCommon reasons: the server wasn’t reloaded (or another worker still serves the old config); another server behind the same name wasn’t changed (check the address list); a load balancer or CDN in front terminates TLS itself; or the binary is linked against an older library than you expect (nginx -V). In Flarebox, Fix applied… re-checks and keeps the before and after."
+  },
+  {
+    "id": "resources-faq#certificates-and-ml-dsa~0",
+    "page": "FAQ",
+    "section": "Certificates and ML-DSA",
+    "url": "https://pqdoctor.com/resources/faq/#certificates-and-ml-dsa",
+    "text": "FAQ: Certificates and ML-DSA\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nDo we need ML-DSA certificates now?\n\nNot urgently. Certificates protect against impersonation at connection time, so recorded traffic isn’t at risk the way it is for key exchange, and browsers don’t yet accept ML-DSA certificates from public certificate authorities. Plan for it: measure your chains, keep them short, and try ML-DSA where you control both ends, such as the Cloudflare-to-origin hop.\n\nWhy does chain size matter?\n\nAn ML-DSA-44 public key is 1,312 bytes and a signature 2,420 bytes, so every certificate grows by about 3.7 KB. A server’s first reply that no longer fits QUIC’s 3,600-byte limit or TCP’s initial window (about 14.6 KB) costs an extra round trip on every new connection. pqdoctor projects each chain to ML-DSA and says which limit it would cross and what to trim first."
+  },
+  {
+    "id": "resources-faq#ci-and-automation~0",
+    "page": "FAQ",
+    "section": "CI and automation",
+    "url": "https://pqdoctor.com/resources/faq/#ci-and-automation",
+    "text": "FAQ: CI and automation\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nWhat do the exit codes mean?\n\nFor one host (and ssh, quic, dtls): 0 post-quantum, 1 not post-quantum, 2 unreachable or an error. pqdoctor diff exits 1 when something regressed. Bad arguments exit 64.\n\nWhich output formats are there?\n\n--format text (the default), json, csv, html (one self-contained file), sarif (for code scanning) and junit (for test dashboards). The JSON shape is documented in the reference, and new fields are only ever added.\n\nCan CI fail only when something gets worse?\n\nYes. The GitHub Action has fail-on: regression, which fails only when a host that was post-quantum in the last run isn’t now. Outside GitHub, keep the last run’s results and use pqdoctor diff old.jsonl new.jsonl, which exits 1 on a regression."
+  },
+  {
+    "id": "resources-faq#pqdoctor~0",
+    "page": "FAQ",
+    "section": "pqdoctor",
+    "url": "https://pqdoctor.com/resources/faq/#pqdoctor",
+    "text": "FAQ: pqdoctor\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nIs it safe to run against servers I don’t own?\n\npqdoctor is handshake-only: it reads each server’s first reply and never completes a key-exchange handshake or sends application data. A single check is a handful of short connections and one HEAD / request. That said, scanning other people’s servers is your responsibility. Identify yourself with --contact, keep the default pacing, and honour opt-outs. See Scanning a list.\n\nWhy does my server say no-mlkem when I enabled post-quantum?\n\nUsually the TLS library underneath is older than you think: nginx or Apache linked against OpenSSL 3.0, say, even if openssl version on the box says 3.5. Check what the server itself is linked against (nginx -V, httpd -V). Or a curve list set by hand leaves X25519MLKEM768 out. See no-mlkem.\n\npqdoctor and OpenSSL disagree. Which is right?\n\nLook at where OpenSSL failed. pqdoctor reads the ServerHello, so it answers “which group did the server pick”. OpenSSL completes the whole handshake, so a later problem (a missing SNI certificate, say) fails it even when the key exchange was post-quantum. In the accuracy checks, that’s what explained the disagreements. See Accuracy.\n\nWhat’s the difference between pq and pq-preferred?\n\nBoth are post-quantum. pq-preferred servers pick ML-KEM even when the client’s first key share is classical, by asking it to retry. pq servers only use ML-KEM when the client offers it first. Browsers offer both shares, so the difference rarely matters for them.\n\nWhy is the origin “unreachable” when the site works?"
+  },
+  {
+    "id": "resources-faq#pqdoctor~1",
+    "page": "FAQ",
+    "section": "pqdoctor",
+    "url": "https://pqdoctor.com/resources/faq/#pqdoctor",
+    "text": "FAQ: pqdoctor\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nYour browser reaches Cloudflare, not the origin. A well-configured origin behind Cloudflare only accepts Cloudflare’s IPs, so from anywhere else it’s unreachable. Check it from inside its network, or let Flarebox connect to the origin address directly.\n\nDoes it check post-quantum certificates?\n\nYes, separately from key exchange: the ML-DSA check says whether the server serves an ML-DSA certificate. It’s on by default for one host; --auth turns it on for scans. It also projects the chain to ML-DSA and says whether the server’s first flight would still fit QUIC’s 3,600-byte limit and TCP’s initial window (about 14.6 KB), or cost a round trip.\n\nHow do I know a download is genuine?\n\npqdoctor comes only from npm and from its own APT repository, apt.pqdoctor.com. npm checks every package against the registry’s hash, and apt checks the repository’s signature (key fingerprint 0166 60F0 74FB 0329 78E2 5ECB 29DD A235 4EBB 4DFA). Flarebox’s installers have a SHA256SUMS.txt on the Downloads page.\n\nIs there a Linux or macOS build?\n\nYes. npm install -g pqdoctor installs a universal macOS binary (Apple silicon and Intel, macOS 11 or later), static Linux binaries for x86_64 and arm64, or the Windows one. The GitHub Action’s own tests run it on Linux x64, Linux arm64, macOS and Windows against live hosts.\n\nWhat does it send exactly?\n\nEvery byte is documented in Probes and wire format."
+  },
+  {
+    "id": "resources-faq#for-organizations~0",
+    "page": "FAQ",
+    "section": "For organizations",
+    "url": "https://pqdoctor.com/resources/faq/#for-organizations",
+    "text": "FAQ: For organizations\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nHow would a company roll this out?\n\nIn five steps: inventory every endpoint (pqdoctor inventory from certificate transparency, DNS zones, Cloudflare, Kubernetes, Terraform and AWS), scan from outside and inside with the fingerprint, route each finding to its owner (owners.toml and pqdoctor tickets), track it in one dashboard (the fleet), and gate CI so it can’t regress (the GitHub Action). The Across a company guide shows each step.\n\nDo we have to install anything on our servers?\n\nNo. Everything works from outside. The agent runs the whole cycle on a schedule from inside a network, for internal names and origins that only accept your CDN. pqdoctor <host> --local on a server is optional: it reads the server software’s versions and sharpens the classification.\n\nIs it safe to scan our production estate?\n\nThe probes are handshake-only: each reads the server’s first reply and hangs up, with no application data and no completed handshake. Scans are paced (4 hosts in flight, 2 new hosts a second by default). Set contact in the config file so your operations team can recognise the traffic, and keep third-party names out with --exclude.\n\nWhat is the fleet? Is it a hosted service?"
+  },
+  {
+    "id": "resources-faq#for-organizations~1",
+    "page": "FAQ",
+    "section": "For organizations",
+    "url": "https://pqdoctor.com/resources/faq/#for-organizations",
+    "text": "FAQ: For organizations\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nFlarebox’s organization dashboard, on your own Cloudflare account (a Worker and a D1 database; the free plan is enough for most). Agents, CI and people push runs to it; it shows the share post-quantum overall and by team, the trend, regressions and fixes, each host’s history, the leverage plan, certificate readiness and CSV exports. Nobody else operates it or sees its data. Sign-in is the admin token, Cloudflare Access (its token verified by the fleet) or personal sign-in keys, with admin, lead and viewer roles; reminders go to Slack, Discord, Microsoft Teams or any JSON webhook. Flarebox (from 0.3.0) deploys it to your account as a reviewed change and shows it in its Fleet page. See Fleet.\n\nHow do teams find out what to fix?\n\npqdoctor tickets files one GitHub issue per non-post-quantum host for the team that owns it, with the cause, the class (config, library or provider), the confidence and the exact next command. Re-runs update the same issue, and it closes itself once the host is post-quantum. For Jira, --jira-csv writes an importable file.\n\nWhich hosts should we fix first?\n\nThe ones that move the most traffic per hour of work. pqdoctor plan groups hosts by TLS terminator (one ingress controller can serve hundreds of names), weights them by traffic (your own analytics or a rank list) and orders the actions by gain per effort, with a bound on what any plan could reach. See Plan.\n\nCan it change our servers?"
+  },
+  {
+    "id": "resources-faq#for-organizations~2",
+    "page": "FAQ",
+    "section": "For organizations",
+    "url": "https://pqdoctor.com/resources/faq/#for-organizations",
+    "text": "FAQ: For organizations\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nOnly when you ask. pqdoctor fix --apply changes a server config after a typed confirmation, runs the server’s own config test, reloads, re-checks from outside, and rolls everything back if any step fails or the host still isn’t post-quantum. Without --apply it only prints a diff for your change record.\n\nWe don’t use GitHub. Does it still fit?\n\nYes. The CLI fits any CI: exit codes (0 post-quantum, 1 not, 2 unreachable), --format junit and --format sarif, and pqdoctor diff exits 1 on a regression. Tickets export to Jira as CSV. The fleet takes runs from anything that can make an HTTPS request.\n\nDoes X25519MLKEM768 satisfy CNSA 2.0?\n\nNo. CNSA 2.0 (US national security systems) specifies ML-KEM-1024 and ML-DSA-87. The group survey reports whether a server accepts SecP384r1MLKEM1024 or pure ML-KEM-1024; every other organization is well served by X25519MLKEM768, which is what browsers and Cloudflare use.\n\nWhat evidence can we give auditors?\n\nFleet CSV exports and the trend; a CycloneDX 1.6 cryptographic bill of materials from any scan (--cbom FILE); Flarebox’s readiness report (one PDF per Cloudflare zone, citing the public NIST, NSA, NCSC, ASD and EU deadlines); and closed issues as a record of each fix.\n\nWhat does it cost, and who supports it?\n\nNothing: pqdoctor and Flarebox, including the GitHub Action and the fleet, are free to use. It’s an independent project; questions and bugs go to GitHub issues."
+  },
+  {
+    "id": "resources-faq#flarebox~0",
+    "page": "FAQ",
+    "section": "Flarebox",
+    "url": "https://pqdoctor.com/resources/faq/#flarebox",
+    "text": "FAQ: Flarebox\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nFlarebox shows features I don’t use. Can I hide them?\n\nFrom Flarebox 0.2.2, yes. Settings → Features turns each one on or off, or start from a preset (Local Workers projects, Post-quantum, Cloudflare zones, Everything). A feature that’s off leaves the menus and the search, and stops its background work; what it stored stays, so turning it back on loses nothing. See Make it yours.\n\nAfter updating to 0.2.2, everything is still on. Is that right?\n\nYes, on purpose: an update never hides anything. Home shows a one-time Make Flarebox yours prompt; choose features there, or Keep everything.\n\nCan I rearrange the Cloudflare menu?\n\nFrom 0.2.2: right-click an item to move it up or down, put it under More, or turn it off; drag it to reorder; or use Settings → Menus, which also resets it.\n\nThe screens feel cramped (or too roomy).\n\nFrom 0.2.2: Settings → General → Density: Compact or Comfortable. Sections on a project’s Overview and the Deploy tab’s cards also fold away and stay folded.\n\nWhat’s on the Post-quantum page?\n\nNew in 0.2.2: a check for any server, with a diagram of what happened on the wire: each of the seven hellos, what was offered, what the server replied, and how long it took. See Post-quantum page.\n\nDoes Flarebox need Node.js?\n\nFor local Workers projects, yes: Flarebox runs each project’s own wrangler, which needs Node. The Cloudflare views and the post-quantum checks don’t.\n\nIs Flarebox made by Cloudflare?\n\nNo. It’s an independent, unofficial project, not affiliated with or endorsed by Cloudflare.\n\nDoes Flarebox need my Cloudflare password or Global API Key?"
+  },
+  {
+    "id": "resources-faq#flarebox~1",
+    "page": "FAQ",
+    "section": "Flarebox",
+    "url": "https://pqdoctor.com/resources/faq/#flarebox",
+    "text": "FAQ: Flarebox\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nNo. Workers features use your existing wrangler login. Account views use a scoped API token you create, and Global API Keys are refused. See Tokens and permissions.\n\nCan Flarebox change my zones without me knowing?\n\nNo. Every change is a stored plan you review as a diff and confirm. It’s refused if the target changed since you looked, and it’s recorded with undo. With no write token, or with read-only mode on, Flarebox can’t change anything at all. See How changes stay safe.\n\nDoes Flarebox send data anywhere?\n\nOnly where it has to: api.cloudflare.com for the Cloudflare views, your own servers for checks you click, and Cloudflare through wrangler for Workers features. No telemetry or analytics. See Privacy.\n\nDoes it cost anything?\n\nFlarebox and pqdoctor are free to use. Some Cloudflare features it shows need a paid plan on Cloudflare’s side (Advanced Certificate Manager for the trust store, for example), and Flarebox says when they do.\n\nWhy does Windows warn me about the installer?\n\nIt isn’t code-signed with a Windows certificate yet. Check its SHA-256 against the release’s SHA256SUMS.txt.\n\nIs there a Mac or Linux version of Flarebox?\n\nLinux, yes: a .deb for Debian and Ubuntu (x86_64) since 0.2.1. macOS isn’t available yet.\n\nHow do I update?"
+  },
+  {
+    "id": "resources-faq#flarebox~2",
+    "page": "FAQ",
+    "section": "Flarebox",
+    "url": "https://pqdoctor.com/resources/faq/#flarebox",
+    "text": "FAQ: Flarebox\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nFrom 0.2.1 Flarebox updates itself, and always asks first: Settings → Updates shows the new version and its notes and installs only after you confirm. Every installer is signed with Flarebox’s own key, and an unsigned or foreign one is refused. Settings, history and tokens are kept. For 0.2.2: the in-app update arrives with the Linux .deb; until then, on Windows, run the 0.2.2 setup over 0.2.1. See Install."
+  },
+  {
+    "id": "resources-faq#licence-and-support~0",
+    "page": "FAQ",
+    "section": "Licence and support",
+    "url": "https://pqdoctor.com/resources/faq/#licence-and-support",
+    "text": "FAQ: Licence and support\n(Common questions about post-quantum TLS, pqdoctor's results, scanning safely, fixing servers, certificates, CI, rolling it out across an organization, and Flarebox.)\nCan we use it commercially?\n\nUsing them, yes: pqdoctor and Flarebox are free for any use, including commercially inside your own organisation. They’re closed source, so changing, redistributing or reselling them isn’t allowed; see the licence that comes with each. The GitHub Action’s own scripts are MIT licensed.\n\nWhere do I report a bug or ask a question?\n\nOn GitHub. For a wrong verdict, include the host (or the JSON from --json) and the pqdoctor version (pqdoctor --version).\n\nIs pqdoctor affiliated with Cloudflare?\n\nNo. pqdoctor and Flarebox are independent projects. Cloudflare’s products are mentioned because the origin hop behind a CDN is where most servers aren’t post-quantum yet."
+  },
+  {
+    "id": "resources-glossary#_top~0",
+    "page": "Glossary",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/resources/glossary/",
+    "text": "Glossary: Overview\n(The terms used across these docs, from CBOM to X25519MLKEM768.)\nTerm | Meaning\nALPN | Application-Layer Protocol Negotiation. The TLS extension that picks HTTP/2 or HTTP/1.1. pqdoctor offers h2 and http/1.1, and leaves it out for mail.\nAutomatic key exchange | Cloudflare’s default for connections to origins: it uses post-quantum key agreement when the origin supports it.\nCBOM | Cryptography Bill of Materials. An inventory of the cryptography a system uses. Flarebox exports one in CycloneDX 1.6 format.\nCause code | pqdoctor’s stable, machine-readable reason for a verdict, e.g. no-mlkem. See Causes and fixes.\nCNSA 2.0 | The NSA’s Commercial National Security Algorithm Suite 2.0, for US national security systems. It requires ML-KEM-1024; hybrid ML-KEM-768 doesn’t meet it.\nCustom Origin Trust Store | A Cloudflare zone’s list of CAs it trusts for origin certificates. Needed for Cloudflare to accept an ML-DSA origin certificate from your own CA. Requires Advanced Certificate Manager.\nDual certificates | A server configured with two certificates, e.g. ECDSA and ML-DSA, that picks one per client from what the client supports.\nFull (strict) | Cloudflare’s encryption mode that requires a valid certificate on the origin. An invalid one gives error 526.\nHarvest now, decrypt later | Recording encrypted traffic today to decrypt it once a large quantum computer exists. Why key exchange is the urgent half of the migration.\nHelloRetryRequest (HRR) | A TLS 1.3 server reply asking the client to retry with a key share for a different group. pqdoctor uses it to tell “supports” from “prefers” post-quantum.\nHybrid key exchange | Running a classical and a post"
+  },
+  {
+    "id": "resources-glossary#_top~1",
+    "page": "Glossary",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/resources/glossary/",
+    "text": "Glossary: Overview\n(The terms used across these docs, from CBOM to X25519MLKEM768.)\n-quantum key exchange together and combining both secrets, so the result is safe if either holds.\nKey share | A client’s public key for one group, sent in the ClientHello so the server can answer in one round trip.\nMiddlebox | A device between client and server that inspects traffic: a load balancer, firewall or TLS-inspecting proxy. Old ones can break on large or unfamiliar ClientHellos.\nML-DSA | Module-Lattice-Based Digital Signature Algorithm, FIPS 204. The post-quantum signature standard. ML-DSA-44 is the size Cloudflare recommends for origins. TLS codepoints 0x0904 to 0x0906.\nML-KEM | Module-Lattice-Based Key-Encapsulation Mechanism, FIPS 203. The post-quantum key exchange standard, formerly Kyber.\nOrigin | The server behind a CDN that actually serves your site.\nOrigin CA | Cloudflare’s own certificate authority for origin certificates. Trusted by Cloudflare only.\nOssification | When middleboxes come to depend on what a protocol looked like in the past, so new but valid messages, like large post-quantum ClientHellos, get dropped.\nProbe | One of pqdoctor’s seven ClientHellos. See Probes and wire format.\nsntrup761 | Streamlined NTRU Prime, the post-quantum part of OpenSSH’s sntrup761x25519-sha512 key exchange, its default from 9.0 to 9.9.\nSTARTTLS | Upgrading a plaintext mail connection (SMTP, IMAP, POP3) to TLS.\nTranco | A research-oriented ranking of popular domains. The study used its top 10,000.\nX25519 | The classical elliptic-curve key exchange most TLS connections use today. Codepoint 0x001D.\nX25519Kyber768Draft00 | The pre-standard hybrid of X25519 and Kyber. Brow"
+  },
+  {
+    "id": "resources-glossary#_top~2",
+    "page": "Glossary",
+    "section": "Overview",
+    "url": "https://pqdoctor.com/resources/glossary/",
+    "text": "Glossary: Overview\n(The terms used across these docs, from CBOM to X25519MLKEM768.)\nsers have dropped it. Codepoint 0x6399.\nX25519MLKEM768 | The standard hybrid of X25519 and ML-KEM-768 for TLS 1.3. Codepoint 0x11EC. What “post-quantum” means in pqdoctor’s verdicts."
+  }
+]

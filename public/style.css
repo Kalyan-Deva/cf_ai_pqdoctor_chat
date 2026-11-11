@@ -114,6 +114,10 @@ code, pre, textarea { font-family: "JetBrains Mono", ui-monospace, monospace; }
 .fix-title { font-weight: 600; }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .rejected { font-size: 12.5px; color: var(--warn); margin-top: 6px; }
+.sources { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.sources ol { margin: 4px 0 0; padding-left: 20px; }
+.sources a { color: var(--brand); text-decoration: none; }
+.sources a:hover { text-decoration: underline; }
 
 .composer { display: flex; gap: 8px; padding: 12px 20px 18px; max-width: 800px; width: 100%; margin: 0 auto; }
 .composer textarea {

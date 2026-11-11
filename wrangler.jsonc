@@ -6,21 +6,40 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // Served at chat.pqdoctor.com (Cloudflare creates the DNS record and certificate); workers.dev stays on too.
+  "routes": [{ "pattern": "chat.pqdoctor.com", "custom_domain": true }],
+  "workers_dev": true,
+
   // The chat UI. /api/* runs the Worker first; everything else is a static file.
   "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
 
-  // Llama 3.3 on Workers AI: explains engine results, never decides them.
+  // Workers AI: Llama 3.3 70B explains engine results (never decides them); Llama 3.1 8B answers follow-ups.
   "ai": { "binding": "AI", "remote": true },
 
+  // The pqdoctor docs, one vector per section (bge-base-en-v1.5, 768 dims). Filled by `npm run reindex`.
+  "vectorize": [{ "binding": "DOCS", "index_name": "pqdoctor-docs", "remote": true }],
+
   // One Durable Object per user: domains, stack, results, chat history (SQLite).
-  "durable_objects": { "bindings": [{ "name": "USER", "class_name": "UserMemory" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserMemory"] }],
+  // DomainCache: one per domain, shared, keeps the engine result (and its explanations) for 10 minutes.
+  "durable_objects": {
+    "bindings": [
+      { "name": "USER", "class_name": "UserMemory" },
+      { "name": "DOMAIN_CACHE", "class_name": "DomainCache" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["UserMemory"] },
+    { "tag": "v2", "new_sqlite_classes": ["DomainCache"] }
+  ],
 
   // check -> explain -> save -> sleep 7 days -> re-check -> notify if the verdict changed.
   "workflows": [{ "name": "pqdoctor-check", "binding": "CHECK", "class_name": "CheckWorkflow" }],
 
-  // Per-IP limit in front of the per-user limit (a new cookie doesn't buy new checks).
-  "ratelimits": [{ "name": "IP_LIMIT", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } }],
+  // Per-IP limits on top of the per-user ones, so a new cookie doesn't buy new messages or checks.
+  "ratelimits": [
+    { "name": "IP_LIMIT", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } },
+    { "name": "CHECK_IP_LIMIT", "namespace_id": "4202", "simple": { "limit": 10, "period": 60 } }
+  ],
 
   "vars": {
     "ENGINE_URL": "https://pqdoctor.com/api/check",

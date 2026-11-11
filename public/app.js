@@ -61,6 +61,8 @@ function card(msg) {
     el("span", { class: "host" }, c.host),
     el("span", { class: `pill ${tone}` }, c.verdictLabel),
     c.recheck ? el("span", { class: "pill info" }, "re-check") : null,
+    c.fromMemory ? el("span", { class: "pill info", title: "Answered from your Durable Object: no new check, no model call" }, "from memory") : null,
+    c.cached && !c.fromMemory ? el("span", { class: "pill info", title: "pqdoctor checked this domain in the last 10 minutes, so its result was reused" }, "cached") : null,
     el("span", { class: "when" }, when(c.checkedAt)),
   );
 
@@ -85,9 +87,23 @@ function card(msg) {
 function render(msg) {
   if (msg.card) return card(msg);
   const pending = /^Checking (\S+) with pqdoctor/.exec(msg.text);
-  const node = el("div", { class: `msg ${msg.role}`, "data-id": msg.id }, el("div", { class: "bubble" }, rich(msg.text)));
+  const bubble = el("div", { class: "bubble" }, rich(msg.text));
+  if (msg.sources?.length) bubble.append(sourceList(msg.sources));
+  const node = el("div", { class: `msg ${msg.role}`, "data-id": msg.id }, bubble);
   if (pending) node.dataset.pending = pending[1];
   return node;
+}
+
+/** "Sources: [1] How it works: The seven probes" with links, only ever to pqdoctor.com. */
+function sourceList(sources) {
+  const list = el("ol");
+  for (const s of sources) {
+    const label = `${s.page}: ${s.section}`;
+    const safe = typeof s.url === "string" && s.url.startsWith("https://pqdoctor.com/");
+    const item = el("li", { value: String(s.n) }, safe ? el("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, label) : label);
+    list.append(item);
+  }
+  return el("div", { class: "sources" }, el("div", { class: "label" }, "From the pqdoctor docs"), list);
 }
 
 function scrollDown() {
@@ -157,12 +173,56 @@ async function say(text) {
   autosize();
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: text }) });
-    const body = await res.json();
-    temp.remove();
     if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      temp.remove();
       log.append(render({ id: -1, role: "notice", text: body.error ?? `Error ${res.status}` }));
       scrollDown();
-    } else applyState(body);
+      return;
+    }
+    // NDJSON: {"type":"state"} snapshots, {"type":"delta"} streamed reply text, {"type":"replace"}.
+    let live = null;
+    let liveText = "";
+    const showLive = () => {
+      if (!live) {
+        live = el("div", { class: "msg assistant streaming" }, el("div", { class: "bubble" }));
+        log.append(live);
+      }
+      live.firstChild.replaceChildren(rich(liveText));
+      scrollDown();
+    };
+    const handle = (ev) => {
+      if (ev.type === "state") {
+        temp.remove();
+        if (live && ev.state.messages.some((m) => m.role === "assistant" || m.role === "notice")) {
+          live.remove();
+          live = null;
+        }
+        applyState(ev.state);
+      } else if (ev.type === "delta") {
+        liveText += ev.text;
+        showLive();
+      } else if (ev.type === "replace") {
+        liveText = ev.text;
+        showLive();
+      }
+    };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) handle(JSON.parse(line));
+      }
+    }
+    temp.remove();
+    live?.remove();
   } catch {
     temp.remove();
     log.append(render({ id: -1, role: "notice", text: "Couldn't reach the server. Check your connection and try again." }));
@@ -206,4 +266,10 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh();
 });
 
-refresh();
+// Shareable prompts: /?q=check+google.com sends that message once the history has loaded, then
+// drops ?q from the address bar so a reload doesn't send it again.
+const linked = new URLSearchParams(location.search).get("q");
+if (linked) history.replaceState(null, "", location.pathname);
+refresh().then(() => {
+  if (linked && linked.trim()) say(linked.trim().slice(0, 600));
+});

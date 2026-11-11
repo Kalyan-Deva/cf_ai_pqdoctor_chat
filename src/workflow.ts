@@ -13,6 +13,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { EngineError, httpEngine, type Engine, type EngineResult } from "./engine";
 import { explain } from "./explain";
 import type { UserMemory } from "./memory";
+import type { DomainCache } from "./cache";
 
 export interface CheckParams {
   userId: string;
@@ -41,6 +42,7 @@ export class CheckWorkflow extends WorkflowEntrypoint<Env, CheckParams> {
     const user = () => (this.env.USER as DurableObjectNamespace<UserMemory>).getByName(userId);
     const engine = engineFor(this.env);
     const recheckAfter = (this.env.RECHECK_AFTER as string) || "7 days";
+    const cache = () => (this.env.DOMAIN_CACHE as DurableObjectNamespace<DomainCache>).getByName(host);
 
     const check = (): Promise<EngineResult> =>
       engine.check(host).catch((e) => {
@@ -49,17 +51,30 @@ export class CheckWorkflow extends WorkflowEntrypoint<Env, CheckParams> {
         throw e;
       });
 
-    // 1. The engine decides.
+    // 1. The engine decides. A result from the last 10 minutes (anyone's) is reused, not re-probed.
     let result: EngineResult;
     try {
-      result = await step.do("run pqdoctor check", CHECK_STEP, check);
+      result = await step.do("run pqdoctor check", CHECK_STEP, async () => {
+        const hit = await cache().get();
+        if (hit) return { ...hit, cached: true };
+        const fresh = await check();
+        await cache().put(fresh);
+        return fresh;
+      });
     } catch (e) {
       await step.do("save failure", () => user().saveFailure(host, (e as Error).message));
       return { host, status: "failed" };
     }
 
     // 2. The LLM explains (explain() never throws: it falls back to the engine's own words).
-    const explanation = await step.do("explain with Llama 3.3", () => explain(this.env.AI, result, stack));
+    // The same result explained for the same stack is reused too (only answers that passed the check).
+    const explanation = await step.do("explain with Llama 3.3", async () => {
+      const hit = await cache().getExplanation(result.checkedAt, stack);
+      if (hit) return hit;
+      const e = await explain(this.env.AI, result, stack);
+      if (e.source === "llm") await cache().putExplanation(result.checkedAt, stack, e);
+      return e;
+    });
 
     // 3. Remember it.
     await step.do("save to memory", () => user().saveResult(host, result, explanation, durationMs(recheckAfter)));
@@ -72,7 +87,12 @@ export class CheckWorkflow extends WorkflowEntrypoint<Env, CheckParams> {
 
     let again: EngineResult;
     try {
-      again = await step.do("re-check", CHECK_STEP, check);
+      // A re-check always probes again (and refreshes the cache for everyone).
+      again = await step.do("re-check", CHECK_STEP, async () => {
+        const fresh = await check();
+        await cache().put(fresh);
+        return fresh;
+      });
     } catch {
       return { host, status: "recheck-failed", verdict: result.verdict };
     }

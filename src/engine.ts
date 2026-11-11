@@ -31,6 +31,8 @@ export interface EngineResult {
   /** The ML-DSA certificate headline, when the engine checked it. */
   certificate: string | null;
   checkedAt: number;
+  /** True when this came from the 10-minute domain cache instead of a new probe. */
+  cached?: boolean;
 }
 
 export class EngineError extends Error {

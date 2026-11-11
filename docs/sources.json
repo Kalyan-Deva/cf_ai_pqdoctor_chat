@@ -1,0 +1,30 @@
+{
+  "origin": "https://pqdoctor.com",
+  "index": "pqdoctor-docs",
+  "about": "Public pqdoctor.com pages the chat answers 'how does pqdoctor work?' from. Only published pages: run `npm run reindex` after the docs change.",
+  "pages": [
+    "/pqdoctor/",
+    "/pqdoctor/how-it-works/",
+    "/pqdoctor/reading-a-report/",
+    "/pqdoctor/causes/",
+    "/pqdoctor/causes/no-mlkem/",
+    "/pqdoctor/causes/tls12-only/",
+    "/pqdoctor/causes/large-hello-dropped/",
+    "/pqdoctor/causes/pq-split-dropped/",
+    "/pqdoctor/causes/pq-group-rejected/",
+    "/pqdoctor/causes/pq-other-group/",
+    "/pqdoctor/causes/kyber-draft-only/",
+    "/pqdoctor/causes/pinned-nist/",
+    "/pqdoctor/causes/no-answer/",
+    "/pqdoctor/causes/fixes-by-server/",
+    "/pqdoctor/reference/probes/",
+    "/pqdoctor/reference/json/",
+    "/pqdoctor/reference/cli/",
+    "/pqdoctor/guides/verify/",
+    "/pqdoctor/guides/trust/",
+    "/pqdoctor/guides/ml-dsa/",
+    "/get-started/post-quantum-tls/",
+    "/resources/faq/",
+    "/resources/glossary/"
+  ]
+}

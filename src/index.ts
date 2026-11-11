@@ -2,13 +2,14 @@
 // are served from public/ by the assets binding; only /api/* reaches this code.
 //
 //   GET  /api/state?since=<id>   messages after <id>, the user's stack and watched domains
-//   POST /api/chat {message}     send a message
+//   POST /api/chat {message}     send a message; streams NDJSON events back
 //   POST /api/forget             delete everything this app remembers about you
 
 import { MAX_MESSAGE, type UserMemory } from "./memory";
 
 export { UserMemory } from "./memory";
 export { CheckWorkflow } from "./workflow";
+export { DomainCache } from "./cache";
 
 const COOKIE = "pqchat_uid";
 
@@ -41,15 +42,20 @@ export default {
     const user = userFrom(req);
     const extra: Record<string, string> = user.fresh ? { "set-cookie": cookieHeader(user.id, url) } : {};
     const memory = (env.USER as DurableObjectNamespace<UserMemory>).getByName(user.id);
+    const ip = req.headers.get("cf-connecting-ip") ?? "local";
 
     if (url.pathname === "/api/state" && req.method === "GET") {
+      // No cookie yet: nothing to remember, so don't create a Durable Object for a read.
+      if (user.fresh) {
+        const perHour = Number(env.CHECKS_PER_HOUR) || 10;
+        return json({ messages: [], stack: [], domains: [], limits: { checksPerHour: perHour, checksLeft: perHour } }, 200, extra);
+      }
       const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
       return json(await memory.state(since), 200, extra);
     }
 
     if (url.pathname === "/api/chat" && req.method === "POST") {
       if (!sameOriginJson(req, url)) return json({ error: "Send JSON from this site." }, 403);
-      const ip = req.headers.get("cf-connecting-ip") ?? "local";
       const { success } = await env.IP_LIMIT.limit({ key: ip });
       if (!success) return json({ error: "Too many messages from your network. Try again in a minute." }, 429, { "retry-after": "60", ...extra });
       let body: { message?: unknown; since?: unknown };
@@ -60,11 +66,16 @@ export default {
       }
       if (typeof body.message !== "string") return json({ error: "message must be a string." }, 400);
       if (body.message.length > MAX_MESSAGE * 4) return json({ error: "Message too long." }, 413);
-      return json(await memory.chat(user.id, body.message), 200, extra);
+      // Streamed: one JSON event per line (state snapshots, reply text as it's approved).
+      return new Response(await memory.chat(user.id, body.message, ip), {
+        headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...extra },
+      });
     }
 
     if (url.pathname === "/api/forget" && req.method === "POST") {
       if (!sameOriginJson(req, url)) return json({ error: "Send JSON from this site." }, 403);
+      if (user.fresh) return json({ ok: true }, 200, extra); // nothing stored for a new visitor
+      if (!(await env.IP_LIMIT.limit({ key: ip })).success) return json({ error: "Too many requests. Try again in a minute." }, 429, { "retry-after": "60" });
       await memory.forget();
       return json({ ok: true }, 200, extra);
     }
